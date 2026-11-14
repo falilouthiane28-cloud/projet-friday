@@ -69,6 +69,7 @@ class Tool:
     run: Callable[[dict[str, Any]], Awaitable[str]]
     summary: Callable[[dict[str, Any]], str]     # phrase pour la confirmation / notification
     destination: str | None = None               # hôte contacté, s'il y en a
+    external: bool = False                       # envoie quelque chose hors de la machine (e-mail, message)
     extra: Mapping[str, Any] = field(default_factory=dict)
 
     def mcp(self) -> dict[str, Any]:

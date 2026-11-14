@@ -19,6 +19,8 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 - Domotique : MCP officiel Home Assistant + hass-client (rapport)
 - Domotique (en place 14/11) : API REST de Home Assistant en stdlib (`src/friday/tools/home.py`), outils sous `ToolGateway` ; jeton dans le trousseau macOS (service `friday-home-assistant`, compte `friday`). MCP officiel non branché (contournerait les guardrails), hass-client plus tard pour les événements (dépend d'aiohttp)
 - Monitoring : psutil + SMC via ctypes + powermetrics (pynvml abandonné, pas de NVIDIA sur Mac)
+- Monitoring (en place 14/11, phase 8) : stdlib + `vm_stat`/`sysctl`/`pmset` (`tools/system.py`, psutil sans wheel 3.15), alertes proactives `SystemWatcher`
+- Communication (en place 14/11, phase 8) : Mail et Messages macOS (osascript, `chat.db` en lecture seule), pas d'OAuth ; envois Tier 1, lethal trifecta bloquée
 - UI (2026-11-14, en place) : SwiftUI natif macOS 26 dans `voice/` (cible `FridayApp`) : MenuBarExtra, dashboard, overlay NSPanel en Liquid Glass, avatar SwiftUI. L'ancien plan suit :
 - UI (rapport stack) : Tauri 2 + tauri-nspanel, avatar Rive ou SVG, design monochrome noir et blanc (`docs/friday-ui-prompt-monochrome.md`)
 
@@ -47,6 +49,7 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 - `src/friday/memory/` — mémoire phase 4 : `store.py` (`MemoryStore` : faits SQLite + index FTS5, `remember`/`recall`/`forget`/`context_for`, `alearn` en tâche de fond, audit), `extractor.py` (`FactExtractor`, `RuleBasedExtractor`, repli), `claude_extractor.py` (`ClaudeFactExtractor` : `claude -p` haiku one-shot, JSON), `secrets.py` (filtre en dur : aucun secret mémorisé)
 - `src/friday/tools/home.py` — domotique phase 6 : `HomeAssistantClient` (REST, jeton lu par `security`), outils `home_states`/`home_light`/`home_switch`/`home_scene`/`home_secure` ; agent `home_controller` (Contrôleur domotique, haiku) dans `registry.py`
 - `src/friday/secrets_broker.py` (trousseau), `src/friday/redact.py` (masquage), `src/friday/guardrails/taint.py` (CaMeL light) ; `docs/securite-phase7.md` — menaces couvertes et restantes ; `tests/test_security.py` — tests d'attaque
+- `src/friday/tools/comms.py` — phase 8 : Mail, Messages, notifications (agent `communicator`) ; `src/friday/tools/system.py` — `system_read` + `SystemWatcher` (agent `system_monitor`) ; `docs/phase8-communication.md` — bilan fait/reporté ; `README.md` — vue d'ensemble
 - `tests/` — pytest (`fake_home_assistant.py` : faux HA REST local) (`.venv/bin/pytest`) ; `data/` — base d'audit locale (ignorée par Git)
 
 ## Plan en 8 phases (détail dans la spec, section 11)
@@ -62,6 +65,7 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 ## Décisions majeures
 | Date | Décision | Raison |
 |------|----------|--------|
+| 2026-11-14 | Phase 8 : Mail/Messages macOS, e-mails et messages = sources non fiables et privées, envoi après lecture bloqué (T0-TRIFECTA) | Pas d'OAuth ni de dépendance ; une injection par e-mail ne doit jamais pouvoir exfiltrer |
 | 2026-11-14 | Phase 7 : contamination par contexte (Tier 2 → 1), jetons de capacité, Tier 0 sur tout le code et les données, sandbox sans exec/fork/Mach | Une entrée non fiable ne doit jamais déclencher seule une action (Tramèr) ; ergonomie : remise à zéro à chaque demande |
 | 2026-11-14 | Domotique par l'API REST de HA derrière la `ToolGateway`, jeton au trousseau, serrures/alarme/volets en Tier 1 (plancher en dur) | Le MCP officiel branché sur Claude Code contournerait guardrails et audit ; pas de nouvelle dépendance |
 | 2026-11-12 | Création des fichiers de suivi | Garder le contexte entre sessions |

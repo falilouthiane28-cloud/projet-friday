@@ -22,7 +22,8 @@ from .guardrails import GuardrailsEngine
 from .log import setup_logging
 from .soul import load_soul
 from .agents import AgentRunner, default_registry, delegate_tools
-from .tools import HomeAssistantClient, ToolGateway, default_tools, home_tools
+from .tools import HomeAssistantClient, ToolGateway, comms_tools, default_tools, home_tools, system_read_tool
+from .tools.system import SystemWatcher
 from .voice import CoreServer, VoiceBridge
 
 
@@ -95,12 +96,14 @@ def main() -> None:
         if "--serve" in sys.argv:
             registry = default_registry()
             home = HomeAssistantClient(cfg.ha_url, cfg.ha_keychain_service, cfg.ha_timeout_s)
-            gateway = ToolGateway(default_tools(cfg.default_city) + home_tools(home), guardrails, audit,
+            tools = default_tools(cfg.default_city) + home_tools(home) + comms_tools() + [system_read_tool()]
+            gateway = ToolGateway(tools, guardrails, audit,
                                   allowed=registry.allowed_tools)
             if binary := getattr(getattr(brain, "remote", None), "binary", None):
                 runner = AgentRunner(registry, gateway, binary, cfg.audit_db_path.parent / "claude-agents")
                 gateway.add_tools(delegate_tools(registry, runner))
-            server = CoreServer(conductor, brain, audit, name=soul["IDENTITY"]["name"], gateway=gateway)
+            server = CoreServer(conductor, brain, audit, name=soul["IDENTITY"]["name"], gateway=gateway,
+                                watcher=SystemWatcher())
             sys.exit(asyncio.run(server.run()))
         if "--voice" in sys.argv:
             sys.exit(asyncio.run(voice_loop(cfg, conductor, brain, audit)))

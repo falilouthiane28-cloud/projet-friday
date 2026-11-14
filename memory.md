@@ -64,3 +64,9 @@
 - Sandbox Codeur : le Python du framework relance `Python.app` → autoriser `process-exec` sur tout `Python.framework` ; `(deny mach-lookup)` et `-I -S` ne cassent pas la stdlib.
 - Audit : ancre `data/audit.db.head` (id + haché) écrite sous le verrou SQLite ; ancre absente → recréée + événement `audit.anchor_created`. Vérif : `PYTHONPATH=src .venv/bin/python -m friday --verify-audit`.
 - Ne pas appeler `setup_logging` dans un test avec `capsys` : structlog garde le flux fermé et casse les tests suivants.
+- 2026-11-14 : phase 8 = **Mail et Messages macOS** (osascript, chat.db), pas de Gmail API ni d'IMAP (OAuth). `email.read`/`message.read` sont contaminants et privés (`PRIVATE_SOURCES`) : après lecture, tout outil `external=True` du même contexte est bloqué par T0-TRIFECTA (sans demander). Pour répondre : brouillon `mail_draft` (Tier 1 si contaminé) ou nouvelle demande dictée. Le calendrier n'est pas classé privé (choix d'ergonomie).
+- `Tool.external` : drapeau d'envoi hors de la machine, transmis par la passerelle en `external_communication` (plancher Tier 1).
+- Lire Messages exige l'Accès complet au disque (`~/Library/Messages/chat.db`, `mode=ro`) ; le texte peut être dans `attributedBody` (typedstream : après `NSString`, `+`, longueur sur 1 octet, ou 0x81 + 2 octets).
+- Moniteur : psutil absent (3.15), donc `vm_stat` + `sysctl` (`/usr/sbin`) + `pmset` + `shutil.disk_usage`. `SystemWatcher` ne répète une alerte qu'après sa retombée.
+- Scripts Mail et Messages pas encore lancés en réel (éviter les invites d'autorisation sans le maître).
+

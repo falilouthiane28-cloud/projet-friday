@@ -23,6 +23,10 @@ Phase 7 (durcissement) :
   fiable (`guardrails/taint.py`) est contaminé ; ses mutations passent en confirmation.
   Une délégation hérite de la contamination du Conductor, et la lui rend à sa fin. La
   contamination du Conductor est remise à zéro à chaque nouvelle demande du maître.
+
+Phase 8 (communication) : un outil `external` (envoi d'e-mail ou de message) est une sortie
+externe (Tier 1 au moins). Si son contexte a lu une source à la fois privée et non fiable
+(e-mails, messages), c'est la « lethal trifecta » : refus T0-TRIFECTA.
 """
 
 from __future__ import annotations
@@ -39,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from ..audit import AuditLog
-from ..guardrails import Action, Approval, GuardrailsEngine, taint_of
+from ..guardrails import Action, Approval, GuardrailsEngine, reads_private, taint_of
 from ..log import get_logger
 from .builtin import Tool, ToolError
 
@@ -150,6 +154,8 @@ class ToolGateway:
         taint = tuple(sorted(self._taint.get(ctx, ())))
         verdict = self.guardrails.evaluate(Action(tool.action, params=args, actor=agent,
                                                   destination=tool.destination, taint_sources=taint,
+                                                  external_communication=tool.external,
+                                                  reads_private_data=reads_private(taint),
                                                   code=args.get(code_field) if code_field else None))
         tier = int(verdict.tier)
         if verdict.blocked:

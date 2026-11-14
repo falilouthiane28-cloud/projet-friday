@@ -61,8 +61,10 @@ def parse_app_message(line: str | bytes) -> dict[str, Any] | None:
 
 class CoreServer:
     def __init__(self, conductor: Conductor, brain: Brain, audit: AuditLog | None = None, name: str = "Friday",
-                 gateway: ToolGateway | None = None) -> None:
+                 gateway: ToolGateway | None = None, watcher: Any = None) -> None:
         self.conductor = conductor
+        self.watcher = watcher                       # SystemWatcher : alertes proactives (phase 8)
+        self._watch: asyncio.Task[None] | None = None
         self.brain = brain
         self.audit = audit
         self.name = name
@@ -172,6 +174,8 @@ class CoreServer:
         if binary := getattr(getattr(self.brain, "remote", None), "binary", None):
             ready["claude_binary"] = str(binary)     # pour « Connecter Claude Code… » dans l'app
         emit(ready)
+        if self.watcher is not None:
+            self._watch = asyncio.create_task(self.watcher.run(self._notify))
         pending: set[asyncio.Task[None]] = set()
         if hasattr(self.brain, "prewarm"):           # Claude Code démarre pendant que l'app s'ouvre
             warm = asyncio.create_task(self._prewarm())
@@ -217,6 +221,8 @@ class CoreServer:
             self._log.exception("serve.prewarm_failed")
 
     async def _close(self) -> None:
+        if self._watch is not None:
+            self._watch.cancel()
         if hasattr(self.brain, "close"):
             await self.brain.close()
         if self.gateway is not None:

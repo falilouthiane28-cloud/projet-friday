@@ -52,7 +52,9 @@ guardrails:
   actions:
     file.delete: 1
     file.move: 1
-    message.send: 1
+    message.send: 1          # iMessage (phase 8) : plancher Tier 1 codé en dur, sortie externe
+    email.send: 1            # e-mail par Mail (phase 8) : plancher Tier 1 codé en dur, sortie externe
+    email.draft: 2           # brouillon ouvert dans Mail, jamais envoyé
     payment.execute: 1
     reminder.create: 2
     calendar.create_event: 2
@@ -68,7 +70,10 @@ guardrails:
     weather.read: 3
     web.search: 3
     web.read: 3
-    system.read_metrics: 3
+    system.read_metrics: 3   # Moniteur système (stdlib + vm_stat/pmset/sysctl)
+    email.read: 3            # e-mails : contenu NON FIABLE et privé (envoi ensuite bloqué : T0-TRIFECTA)
+    message.read: 3          # Messages (chat.db en lecture seule) : idem
+    notification.send: 3     # notification locale du Mac
     file.read: 3
     memory.cache_check: 4
     memory.read: 4
