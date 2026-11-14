@@ -23,4 +23,13 @@
 - Guardrails : Tier 0 = 6 règles gelées (`T0-EXFIL`, `T0-OBFUSCATED`, `T0-SELF-MODIFY`, `T0-IMPERSONATION`, `T0-CREDENTIALS`, `T0-TRIFECTA`), évaluées avant tout ; la config YAML ne peut que durcir un tier (planchers en dur, action inconnue = Tier 1, toute sortie externe = Tier 1) ; Tier 0 refusé en config.
 - Fichiers protégés contre Friday : `src/friday/guardrails/`, `audit.py`, `config/`, `SOUL.md`, `data/audit.db`.
 - Audit : pas de texte brut des messages, seulement une empreinte SHA-256 (16 caractères).
+- 2026-11-14 : **voix en Swift natif** (choix de l'utilisateur), cœur en Python ; le binaire `friday-voice` est lancé par Python et dialogue en JSON Lines sur stdin/stdout. Remplace Pipecat, livekit-wakeword, Deepgram et ElevenLabs du rapport (onnxruntime n'existe pas pour Python 3.15).
+- 2026-11-14 : **le cerveau sera Claude Code** (décision de l'utilisateur pour la phase 3). Risque : le démarrage d'une session Claude Code en mode headless prend probablement plusieurs secondes, ce qui sortirait du budget de 2 s. Garder les réponses locales (`LocalBrain`) pour les commandes simples.
+- Mac : macOS 26.7, arm64, Swift 6.3, Command Line Tools sans Xcode, donc ni XCTest ni Swift Testing (cible exécutable `friday-voice-checks` à la place). Voix françaises installées en qualité compacte seulement (Thomas) : conseiller une voix premium (Réglages → Accessibilité → Contenu énoncé).
+- Wake word : le token « friday » repéré dans la transcription continue, plus des contextualStrings ; livekit-wakeword est possible plus tard pour réduire la consommation.
+- 2026-11-14 : **UI en SwiftUI natif** (rapport `reports/Interface desktop Friday.md`) : vrai Liquid Glass (`glassEffect`), overlay en NSPanel ; Tauri et Electron sont écartés. Les icônes sont des SF Symbols (Lucide ne s'utilisait que pour le web). Les yeux restent blancs : l'image de référence (robot blanc, yeux bleus) ne sert que pour les formes.
+- Vérification visuelle sans écran : `friday-app --snapshot <dossier>` (ImageRenderer ; les contrôles AppKit comme Toggle, TextField et List n'y sont pas rendus).
+- Limites des CLT confirmées : pas de `#Preview` ni d'`actool` (icône en `.icns`), Swift Testing possible seulement avec des drapeaux `-F` et `-rpath`.
+- Raccourci global : il faut Cmd ou Ctrl (depuis Sequoia, Option seul échoue) ; ⌃⌥Espace est suggéré.
+- Demande de l'utilisateur : Friday doit rester **tout le temps à l'écran sous forme de bulle**. L'overlay a deux états (bulle 96 px ↔ fenêtre 380×680) et Échap réduit au lieu de masquer.
 - Conductor : interface `IntentClassifier` prévue pour brancher semantic-router puis Haiku en phase 3.

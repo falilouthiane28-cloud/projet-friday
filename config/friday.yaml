@@ -14,6 +14,11 @@ logging:
 audit:
   db_path: data/audit.db
 
+voice:
+  # Binaire Swift (cd voice && swift build -c release)
+  binary: voice/.build/release/friday-voice
+  locale: fr-FR
+
 conductor:
   # En dessous de ce score, l'intention retombe sur « conversation ».
   min_confidence: 0.3

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>ai.friday.voice</string>
+    <key>CFBundleName</key>
+    <string>friday-voice</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Friday écoute le mot d'activation « Hey Friday » et vos commandes vocales.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Friday transcrit votre voix sur l'appareil.</string>
+</dict>
+</plist>

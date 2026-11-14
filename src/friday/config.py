@@ -29,6 +29,8 @@ class FridayConfig:
     audit_db_path: Path = PROJECT_ROOT / "data" / "audit.db"
     min_confidence: float = 0.3
     guardrails: GuardrailsConfig = field(default_factory=GuardrailsConfig)
+    voice_binary: Path = PROJECT_ROOT / "voice" / ".build" / "release" / "friday-voice"
+    voice_locale: str = "fr-FR"
 
 
 def _resolve(path: str | Path, base: Path) -> Path:
@@ -45,6 +47,7 @@ def load_config(path: str | Path | None = None) -> FridayConfig:
     audit = raw.get("audit", {})
     cond = raw.get("conductor", {})
     gr = raw.get("guardrails", {})
+    voice = raw.get("voice", {})
 
     tiers = {str(k): int(v) for k, v in (gr.get("actions") or {}).items()}
     for name, tier in tiers.items():
@@ -64,4 +67,6 @@ def load_config(path: str | Path | None = None) -> FridayConfig:
             actions=tiers,
             allowed_domains=tuple(gr.get("allowed_domains") or ()),
         ),
+        voice_binary=_resolve(voice.get("binary", "voice/.build/release/friday-voice"), PROJECT_ROOT),
+        voice_locale=voice.get("locale", "fr-FR"),
     )
