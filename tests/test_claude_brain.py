@@ -259,3 +259,36 @@ def test_persistant_reset_tue_le_processus(tmp_path):
     assert p1.returncode == -9 and b.session_id is None
     assert asyncio.run(b.respond("b", decision())) == "B."
     assert "--resume" not in spawned[1]                                 # nouvelle conversation
+
+
+def test_persistant_avec_outils_mcp_et_date_en_tete(tmp_path):
+    from datetime import datetime
+    proc = FakeProc([[delta_line("Fait."), result_line("Fait.", "s2")]])
+    b, spawned = persistent(tmp_path, proc)
+    b.clock = lambda: datetime(2026, 11, 14, 15, 30)
+    b.use_tools('{"mcpServers": {}}')
+
+    async def scenario():
+        return [d async for d in b.stream("rappelle-moi", decision(), "voice")]
+
+    assert asyncio.run(scenario()) == ["Fait."]
+    cmd = spawned[0]
+    assert cmd[cmd.index("--tools") + 1] == "" and "--strict-mcp-config" in cmd    # aucun outil intégré
+    assert cmd[cmd.index("--mcp-config") + 1] == '{"mcpServers": {}}'
+    assert cmd[cmd.index("--allowedTools") + 1] == "mcp__friday"
+    prompt = cmd[cmd.index("--system-prompt") + 1]
+    assert "aucun outil" not in prompt and "rappels" in prompt
+    assert proc.sent[0]["message"]["content"] == VOICE_TAG + "[samedi 2026-11-14 15:30] rappelle-moi"
+
+
+def test_sans_outils_le_prompt_le_dit(tmp_path):
+    b, _ = persistent(tmp_path)
+    cmd = b.persistent_command()
+    assert "--mcp-config" not in cmd and "aucun outil" in cmd[cmd.index("--system-prompt") + 1]
+
+
+def test_blocs_de_texte_separes(tmp_path):
+    block = json.dumps({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "text", "text": ""}}})
+    proc = FakeProc([[block, delta_line("Je cherche."), block, delta_line("Le rappel est créé."), result_line("x", "s")]])
+    b, _ = persistent(tmp_path, proc)
+    assert asyncio.run(b.respond("a", decision())) == "Je cherche.\n\nLe rappel est créé."

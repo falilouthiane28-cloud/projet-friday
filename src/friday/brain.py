@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from collections.abc import AsyncIterator
-from typing import Callable, Protocol
+import re
+from typing import Any, Callable, Protocol
 
 from .conductor import Intent, RoutingDecision, normalize
 
@@ -57,18 +58,40 @@ class LocalBrain:
         return f"Bien reçu. L'agent {decision.agent} sera branché à la phase 3."
 
 
+# « oublie que je bois du café », « efface mon café préféré »…
+_FORGET = re.compile(r"^(?:friday[ ,]*)?(?:oublie|efface)\s+(?:que\s+|ce que\s+)?(.+)$", re.IGNORECASE)
+
+
 class HybridBrain:
     """Heure et date en local (instantané), tout le reste à Claude Code."""
 
     name = "Claude Code"
 
-    def __init__(self, local: LocalBrain, remote: Brain) -> None:
+    def __init__(self, local: LocalBrain, remote: Brain, memory: Any = None) -> None:
         self.local = local
         self.remote = remote
+        self.memory = memory                         # MemoryStore (phase 4), facultatif
+
+    def _remember(self, text: str) -> tuple[str | None, str]:
+        """Mémoire : « oublie … » → réponse locale ; sinon apprend l'énoncé et ajoute les faits utiles à la question."""
+        if self.memory is None:
+            return None, text
+        if m := _FORGET.match(text.strip()):
+            n = self.memory.forget(m.group(1).strip(" .!?"))
+            if n:                                    # la conversation de Claude contient encore le fait : on l'efface aussi
+                self.reset()
+            return ("C'est oublié." if n else "Je n'avais rien retenu à ce sujet."), text
+        self.memory.learn(text)
+        ctx = self.memory.context_for(text)
+        return None, (f"{ctx}\n\n{text}" if ctx else text)
 
     def reset(self) -> None:
         if hasattr(self.remote, "reset"):
             self.remote.reset()
+
+    def use_tools(self, mcp_config: str | None) -> None:
+        if hasattr(self.remote, "use_tools"):
+            self.remote.use_tools(mcp_config)
 
     async def prewarm(self) -> None:
         if hasattr(self.remote, "prewarm"):
@@ -81,9 +104,12 @@ class HybridBrain:
     async def respond(self, text: str, decision: RoutingDecision, source: str = "text") -> str:
         if (reply := self.local.quick(text)) is not None:
             return reply
+        forgot, prompt = self._remember(text)
+        if forgot is not None:
+            return forgot
         from .claude_brain import ClaudeError
         try:
-            return await self.remote.respond(text, decision, source)
+            return await self.remote.respond(prompt, decision, source)
         except ClaudeError as exc:
             return str(exc)
 
@@ -92,13 +118,17 @@ class HybridBrain:
         if (reply := self.local.quick(text)) is not None:
             yield reply
             return
+        forgot, prompt = self._remember(text)
+        if forgot is not None:
+            yield forgot
+            return
         from .claude_brain import ClaudeError
         streamer = getattr(self.remote, "stream", None)
         try:
             if streamer is None:
-                yield await self.remote.respond(text, decision, source)
+                yield await self.remote.respond(prompt, decision, source)
                 return
-            async for delta in streamer(text, decision, source):
+            async for delta in streamer(prompt, decision, source):
                 yield delta
         except ClaudeError as exc:
             yield str(exc)

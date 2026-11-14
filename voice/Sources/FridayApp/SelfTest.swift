@@ -37,6 +37,20 @@ func runSelfTest() async -> Bool {
     model.send()
     check(model.avatar == .thinking, "saisie texte → réflexion")
     check(await waitForReply(after: n + 1), "réponse texte du cœur : « \(model.messages.last?.text ?? "") »")
+
+    // Confirmation Tier 1 : carte dans le fil, une seule réponse, expiration.
+    model.overlayExpanded = true                  // pas de panneau en selftest
+    model.handle(CoreEvent.confirm(id: 901, summary: "Supprimer vieux.txt", action: "file.delete"))
+    check(model.messages.last?.confirm?.state == .pending, "carte Autoriser/Refuser dans le fil")
+    model.answerConfirm(901, ok: true)
+    check(model.messages.last?.confirm?.state == .allowed, "Autoriser → carte tranchée")
+    model.answerConfirm(901, ok: false)
+    check(model.messages.last?.confirm?.state == .allowed, "une seule réponse par carte")
+    model.handle(CoreEvent.confirm(id: 902, summary: "Vider la corbeille", action: "file.delete"))
+    model.handle(CoreEvent.confirmExpired(id: 902))
+    check(model.messages.last?.confirm?.state == .expired, "sans réponse → refus affiché")
+    model.handle(CoreEvent.notice("Créer le rappel « Appeler Paul »"))
+    check(model.messages.last?.isNotice == true, "notification Tier 2 dans le fil")
     model.shutdown()
     return ok
 }

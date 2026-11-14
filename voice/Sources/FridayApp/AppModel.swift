@@ -10,6 +10,8 @@ struct ChatMessage: Identifiable, Equatable {
     let fromFriday: Bool
     var text: String
     let date = Date()
+    var confirm: ConfirmRequest? = nil            // carte Autoriser / Refuser (action Tier 1)
+    var isNotice = false                          // action Tier 2 exécutée
 }
 
 /// Diagnostic (`FRIDAY_DEBUG_AUDIO=1`) : texte entendu par la transcription, sur stderr.
@@ -209,6 +211,24 @@ final class AppModel {
             } else if voice == nil || !spoken {
                 show(loginRequired ? .confused : .happy)
             }
+        case .confirm(let id, let summary, let action):
+            let request = ConfirmRequest(id: id, summary: summary, action: action)
+            messages.append(ChatMessage(fromFriday: true, text: summary, confirm: request))
+            log("confirmation demandée (\(action))")
+            if !overlayExpanded {                         // la carte doit être visible
+                OverlayController.shared.show(model: self)
+                OverlayController.shared.setExpanded(true)
+            }
+            show(.confused)
+            // Annonce vocale si la question en cours est vocale (ou option « tout lire »).
+            if let voice, pendingText.isEmpty || speakAllReplies {
+                let text = request.spoken
+                inOrder { await voice.controller.sayMore(text) }
+            }
+        case .confirmExpired(let id):
+            updateConfirm(id) { $0.expire() }
+        case .notice(let text):
+            messages.append(ChatMessage(fromFriday: true, text: text, isNotice: true))
         case .error(let message):
             pendingText.removeAll()
             note("Le cœur a signalé une erreur : \(message)")
@@ -225,6 +245,23 @@ final class AppModel {
     }
 
     // MARK: - Actions
+
+    /// Réponse du maître à une carte de confirmation (une seule fois par carte).
+    func answerConfirm(_ id: Int, ok: Bool) {
+        var request: CoreRequest?
+        updateConfirm(id) { request = $0.answer(ok) }
+        if let request {
+            core?.send(request)
+            log("confirmation \(ok ? "accordée" : "refusée")")
+            show(.thinking)
+        }
+    }
+
+    private func updateConfirm(_ id: Int, _ change: (inout ConfirmRequest) -> Void) {
+        guard let i = messages.lastIndex(where: { $0.confirm?.id == id }), var c = messages[i].confirm else { return }
+        change(&c)
+        messages[i].confirm = c
+    }
 
     func show(_ state: AvatarState) {
         if state == .neutral { apply(machine.clear(now: now)) } else { apply(machine.request(state, now: now)) }

@@ -128,6 +128,25 @@ check(CoreEvent.parse(#"{"type":"reply","text":"sans id"}"#) == nil, "reply sans
 check(CoreEvent.parse(#"{"type":"error","message":"boum"}"#) == .error("boum"), "error lu")
 check(CoreEvent.parse("pas du json") == nil && CoreEvent.parse(#"{"type":"say"}"#) == nil, "messages inconnus ignorés")
 
+// --- Confirmation Tier 1 ---
+check(CoreEvent.parse(#"{"type":"confirm","id":2,"summary":"Supprimer vieux.txt","action":"file.delete"}"#)
+      == .confirm(id: 2, summary: "Supprimer vieux.txt", action: "file.delete"), "confirm lu")
+check(CoreEvent.parse(#"{"type":"confirm","summary":"sans id"}"#) == nil, "confirm sans id refusé")
+check(CoreEvent.parse(#"{"type":"confirm","id":2,"summary":""}"#) == nil, "confirm sans résumé refusé")
+check(CoreEvent.parse(#"{"type":"confirm_expired","id":2}"#) == .confirmExpired(id: 2), "confirm_expired lu")
+check(CoreEvent.parse(#"{"type":"notice","text":"Rappel créé"}"#) == .notice("Rappel créé"), "notice lu")
+check(CoreRequest.confirmResult(id: 2, ok: true).jsonLine() == #"{"id":2,"ok":true,"type":"confirm_result"}"#, "confirm_result encodé")
+var card = ConfirmRequest(id: 2, summary: "Supprimer vieux.txt", action: "file.delete")
+check(card.state == .pending && card.statusText == "En attente de votre accord", "carte en attente")
+check(card.answer(false) == .confirmResult(id: 2, ok: false) && card.state == .denied, "Refuser → refus envoyé")
+check(card.answer(true) == nil && card.state == .denied, "une seule réponse par carte")
+card.expire()
+check(card.state == .denied, "expiration sans effet après réponse")
+var late = ConfirmRequest(id: 3, summary: "x", action: "")
+late.expire()
+check(late.state == .expired && late.answer(true) == nil, "carte expirée : plus de réponse possible")
+check(ConfirmRequest(id: 4, summary: "Supprimer vieux.txt", action: "").spoken.contains("Supprimer vieux.txt"), "annonce vocale")
+
 // --- Niveau audio ---
 check(AudioLevel.normalized(rms: 0) == 0 && AudioLevel.normalized(rms: .nan) == 0, "silence → 0")
 check(AudioLevel.normalized(rms: 0.001) == 0, "sous le plancher (-60 dB) → 0")

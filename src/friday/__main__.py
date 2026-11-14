@@ -11,6 +11,7 @@ import asyncio
 import sys
 
 from .audit import AuditLog
+from .memory import MemoryStore
 from .brain import Brain, HybridBrain, LocalBrain
 from .claude_brain import PersistentClaudeBrain, find_claude_binary
 from .conductor import Conductor
@@ -18,6 +19,7 @@ from .config import FridayConfig, load_config
 from .guardrails import GuardrailsEngine
 from .log import setup_logging
 from .soul import load_soul
+from .tools import ToolGateway, default_tools
 from .voice import CoreServer, VoiceBridge
 
 
@@ -46,7 +48,7 @@ async def voice_loop(cfg: FridayConfig, conductor: Conductor, brain: Brain, audi
         await bridge.shutdown()
 
 
-def make_brain(cfg: FridayConfig, soul: dict) -> Brain:
+def make_brain(cfg: FridayConfig, soul: dict, audit: AuditLog | None = None) -> Brain:
     local = LocalBrain()
     if cfg.brain_engine != "claude-code":
         return local
@@ -55,7 +57,8 @@ def make_brain(cfg: FridayConfig, soul: dict) -> Brain:
         print("Claude Code introuvable : réponses locales seulement.", file=sys.stderr)
         return local
     workdir = cfg.audit_db_path.parent / "claude"      # sessions Claude Code de Friday, hors du dépôt
-    return HybridBrain(local, PersistentClaudeBrain(binary, soul, workdir, cfg.claude_model, cfg.claude_timeout_s))
+    memory = MemoryStore(cfg.audit_db_path.parent / "memory.db", audit) if audit is not None else None
+    return HybridBrain(local, PersistentClaudeBrain(binary, soul, workdir, cfg.claude_model, cfg.claude_timeout_s), memory)
 
 
 def main() -> None:
@@ -66,10 +69,11 @@ def main() -> None:
     audit = AuditLog(cfg.audit_db_path)
     guardrails = GuardrailsEngine(cfg.guardrails.actions, cfg.guardrails.allowed_domains, audit)
     conductor = Conductor(guardrails=guardrails, audit=audit)
-    brain = make_brain(cfg, soul)
+    brain = make_brain(cfg, soul, audit)
     try:
         if "--serve" in sys.argv:
-            server = CoreServer(conductor, brain, audit, name=soul["IDENTITY"]["name"])
+            gateway = ToolGateway(default_tools(cfg.default_city), guardrails, audit)
+            server = CoreServer(conductor, brain, audit, name=soul["IDENTITY"]["name"], gateway=gateway)
             sys.exit(asyncio.run(server.run()))
         if "--voice" in sys.argv:
             sys.exit(asyncio.run(voice_loop(cfg, conductor, brain, audit)))

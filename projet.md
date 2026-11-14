@@ -13,6 +13,7 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 - LLM (rapport) : semantic-router pour les commandes fréquentes → Haiku 5.5 (routage) → Sonnet 5.5 (conversation) / Opus 5.5 (Coder, Researcher). Secours hors ligne Qwen3 8B.
 - Orchestration : Conductor en code (Pydantic AI ou SDK Anthropic) ; Claude Agent SDK pour les agents longs uniquement
 - Mémoire : SQLite + mem0 OSS + Chroma + embeddings bge-m3 (PostgreSQL abandonné)
+- Mémoire (révisé 14/11) : SQLite + FTS5 seulement (`src/friday/memory/`) ; Chroma et bge-m3 écartés tant qu'onnxruntime manque pour Python 3.15, mem0 non utilisé
 - Sécurité : « CaMeL light » (valeurs marquées non fiables), passerelle d'outils deny > ask > allow, Trousseau macOS derrière un broker, sandbox-runtime ou Apple `container`, audit SQLite WAL chaîné
 - Domotique : MCP officiel Home Assistant + hass-client
 - Monitoring : psutil + SMC via ctypes + powermetrics (pynvml abandonné, pas de NVIDIA sur Mac)
@@ -37,8 +38,10 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 - `src/friday/` — code : `config.py`, `soul.py`, `log.py` (structlog), `audit.py` (SQLite WAL chaîné), `conductor.py`, `guardrails/` (`tiers.py`, `tier0.py`, `engine.py`), `__main__.py`
 - `voice/` — paquet Swift : `FridayVoiceCore` (machine à états, wake word, protocole), `FridayVoiceKit` (micro, STT, TTS, `VoicePipeline`), `FridayVoice` (binaire piloté par Python), `FridayUICore` (avatar, lien voix → avatar), `FridayApp` (interface SwiftUI avec la voix dans le même processus, cœur Python en sous-processus, raccourci KeyboardShortcuts 1.15.0), `friday-voice-checks`
 - `reports/Interface desktop Friday.md` — rapport de recherche UI (notes dans `research_notes/Interface desktop Friday/`)
-- `src/friday/claude_brain.py` (`ClaudeCodeBrain`), `brain.py` (`LocalBrain`, `HybridBrain`)
+- `src/friday/claude_brain.py` (`ClaudeCodeBrain`, `PersistentClaudeBrain`), `brain.py` (`LocalBrain`, `HybridBrain`)
+- `src/friday/tools/` — outils de Claude : `mcp_server.py` (relais MCP stdio sans dépendance, lancé par Claude Code), `gateway.py` (`ToolGateway` : socket Unix, guardrails, confirmation Tier 1, audit), `builtin.py` (rappels osascript, météo Open-Meteo, recherche DuckDuckGo)
 - `src/friday/voice/bridge.py` (pont JSON Lines, mode `--voice`), `src/friday/voice/server.py` (`CoreServer`, mode `--serve` lancé par l'app), `src/friday/brain.py` (`LocalBrain`)
+- `src/friday/memory/` — mémoire phase 4 : `store.py` (`MemoryStore` : faits SQLite + index FTS5, `remember`/`recall`/`forget`/`context_for`, audit), `extractor.py` (`FactExtractor`, `RuleBasedExtractor`)
 - `tests/` — pytest (`.venv/bin/pytest`) ; `data/` — base d'audit locale (ignorée par Git)
 
 ## Plan en 8 phases (détail dans la spec, section 11)
@@ -59,6 +62,7 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 | 2026-11-13 | UI passée en noir et blanc strict | Prompt v2 de l'utilisateur |
 | 2026-11-14 | Cerveau Claude Code headless sans outils, heure/date en local | Choix de l'utilisateur ; aucune action machine avant les guardrails de la phase 3 |
 | 2026-11-14 | App = UI + voix dans un processus Swift, Python en sous-processus (`--serve`) | Recommandation du rapport UI ; un seul AVAudioEngine, états voix directs vers l'avatar |
+| 2026-11-14 | Outils de Claude = serveur MCP relais → `ToolGateway` du cœur (guardrails + audit), confirmation Tier 1 dans la bulle, refus par défaut après 60 s | Toute action passe par le moteur codé en dur, jamais par le prompt |
 | 2026-11-14 | UI en SwiftUI natif plutôt que Tauri | Vrai Liquid Glass, compile avec les CLT, même langage que la voix |
 | 2026-11-14 | Voix en Swift natif, cœur Python, cerveau Claude Code | Choix de l'utilisateur ; onnxruntime absent pour Python 3.15 |
 | 2026-11-13 | Phase 1 : Tier 0 en code, config qui ne peut que durcir, audit sans texte brut | Sécurité par architecture (rapport) |

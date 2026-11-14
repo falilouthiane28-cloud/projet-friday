@@ -20,12 +20,16 @@ voice:
   locale: fr-FR
 
 brain:
-  # claude-code : heure et date en local, le reste à Claude Code (`claude -p`, sans outils).
+  # claude-code : heure et date en local, le reste à Claude Code (outils Friday seulement, sous guardrails).
   # local : réponses locales seulement (hors ligne).
   engine: claude-code
   claude_binary: null    # null : PATH, ~/.claude/local, puis le binaire de l'app Claude
   model: sonnet
   timeout_s: 60
+
+tools:
+  # Outils de Claude Code (serveur MCP de Friday), chacun soumis aux guardrails ci-dessous.
+  default_city: null     # ville de la météo par défaut (ex. Paris) ; null : Claude demande
 
 conductor:
   # En dessous de ce score, l'intention retombe sur « conversation ».
@@ -47,6 +51,7 @@ guardrails:
     file.write: 2
     weather.read: 3
     web.search: 3
+    web.read: 3
     system.read_metrics: 3
     file.read: 3
     memory.cache_check: 4

@@ -1,14 +1,20 @@
 """Cœur Python en sous-processus de l'app Swift `friday-app` (`python -m friday --serve`).
 
 Protocole JSON Lines (stdin → stdout ; journaux sur stderr) :
-- app → cœur : ask{id, text, source}, metrics{ttfa_ms}, reset, shutdown
-- cœur → app : ready{name, brain}, chunk{id, text} (une phrase, réponse en cours),
-  reply{id, text, intent, agent, streamed?, login_required?}, error{message}
+- app → cœur : ask{id, text, source}, metrics{ttfa_ms}, reset, confirm_result{id, ok}, shutdown
+- cœur → app : ready{name, brain, tools?}, chunk{id, text} (une phrase, réponse en cours),
+  reply{id, text, intent, agent, streamed?, login_required?}, error{message},
+  confirm{id, summary, action} (action Tier 1 : Autoriser/Refuser), confirm_expired{id},
+  notice{text} (action Tier 2 exécutée)
+
+Outils : si une `ToolGateway` est fournie, son socket est ouvert au démarrage et Claude Code
+reçoit le serveur MCP relais ; les confirmations Tier 1 passent par l'app.
 """
 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import sys
 from collections.abc import Callable
@@ -19,6 +25,7 @@ from ..brain import Brain
 from ..claude_brain import LOGIN_HELP, SentenceSplitter
 from ..conductor import Conductor
 from ..log import get_logger
+from ..tools import ToolGateway
 
 SOURCES = frozenset({"voice", "text"})
 
@@ -37,18 +44,55 @@ def parse_app_message(line: str | bytes) -> dict[str, Any] | None:
         if msg.get("source", "text") not in SOURCES:
             return None
         return msg
+    if kind == "confirm_result":
+        if not isinstance(msg.get("id"), int) or not isinstance(msg.get("ok"), bool):
+            return None
+        return msg
     if kind in ("metrics", "reset", "shutdown"):
         return msg
     return None
 
 
 class CoreServer:
-    def __init__(self, conductor: Conductor, brain: Brain, audit: AuditLog | None = None, name: str = "Friday") -> None:
+    def __init__(self, conductor: Conductor, brain: Brain, audit: AuditLog | None = None, name: str = "Friday",
+                 gateway: ToolGateway | None = None) -> None:
         self.conductor = conductor
         self.brain = brain
         self.audit = audit
         self.name = name
+        self.gateway = gateway
+        self._emit: Callable[[dict[str, Any]], None] | None = None
+        self._confirms: dict[int, asyncio.Future[bool]] = {}
+        self._confirm_ids = itertools.count(1)
         self._log = get_logger("friday.serve")
+        if gateway is not None:
+            gateway.confirm = self._confirm
+            gateway.notify = self._notify
+
+    async def _confirm(self, summary: str, action: str) -> bool:
+        """Demande Autoriser/Refuser à l'app ; le délai (refus par défaut) est géré par la passerelle."""
+        if self._emit is None:
+            return False
+        cid = next(self._confirm_ids)
+        fut: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        self._confirms[cid] = fut
+        self._emit({"type": "confirm", "id": cid, "summary": summary, "action": action})
+        try:
+            return await fut
+        except asyncio.CancelledError:              # délai dépassé : la carte se ferme dans l'app
+            self._emit({"type": "confirm_expired", "id": cid})
+            raise
+        finally:
+            self._confirms.pop(cid, None)
+
+    def _notify(self, text: str) -> None:
+        if self._emit is not None:
+            self._emit({"type": "notice", "text": text})
+
+    def _deny_pending(self) -> None:
+        for fut in self._confirms.values():
+            if not fut.done():
+                fut.set_result(False)
 
     async def handle(self, msg: dict[str, Any]) -> dict[str, Any] | None:
         """Traite un message de l'app ; retourne la réponse à émettre (ou None)."""
@@ -68,8 +112,14 @@ class CoreServer:
             self._log.info("voice.ttfa", ttfa_ms=ttfa)
             if self.audit is not None:
                 self.audit.append("voice", "voice.ttfa", {"ttfa_ms": ttfa})
-        elif kind == "reset" and hasattr(self.brain, "reset"):
-            self.brain.reset()
+        elif kind == "confirm_result":
+            fut = self._confirms.get(msg["id"])
+            if fut is not None and not fut.done():
+                fut.set_result(msg["ok"])
+        elif kind == "reset":
+            self._deny_pending()
+            if hasattr(self.brain, "reset"):
+                self.brain.reset()
         return None
 
     async def run(self, stdin: IO[str] | None = None, stdout: IO[str] | None = None) -> int:
@@ -81,7 +131,15 @@ class CoreServer:
             stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
             stdout.flush()
 
+        self._emit = emit
         ready = {"type": "ready", "name": self.name, "brain": getattr(self.brain, "name", "local")}
+        if self.gateway is not None and hasattr(self.brain, "use_tools"):
+            try:
+                await self.gateway.start()
+                self.brain.use_tools(self.gateway.mcp_config(sys.executable))
+                ready["tools"] = [t["name"] for t in self.gateway.list_tools()]
+            except OSError:
+                self._log.exception("serve.tools_failed")
         if binary := getattr(getattr(self.brain, "remote", None), "binary", None):
             ready["claude_binary"] = str(binary)     # pour « Connecter Claude Code… » dans l'app
         emit(ready)
@@ -93,6 +151,7 @@ class CoreServer:
         while True:
             line = await loop.run_in_executor(None, stdin.readline)
             if not line:                       # stdin fermé : l'app s'est arrêtée
+                self._deny_pending()
                 await asyncio.gather(*pending)
                 await self._close()
                 return 0
@@ -104,6 +163,7 @@ class CoreServer:
                 emit({"type": "error", "message": "message invalide"})
                 continue
             if msg["type"] == "shutdown":
+                self._deny_pending()               # personne ne répondra : refus
                 await asyncio.gather(*pending)     # les réponses en cours partent avant l'arrêt
                 await self._close()
                 return 0
@@ -130,6 +190,8 @@ class CoreServer:
     async def _close(self) -> None:
         if hasattr(self.brain, "close"):
             await self.brain.close()
+        if self.gateway is not None:
+            await self.gateway.close()
 
     async def _answer(self, msg: dict[str, Any], emit: Callable[[dict[str, Any]], None]) -> None:
         streamer = getattr(self.brain, "stream", None)

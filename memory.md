@@ -42,4 +42,10 @@
 - Claude Code en flux : `-p … --output-format stream-json --verbose --include-partial-messages` ; les deltas sont dans `stream_event.event.delta.text_delta`, la fin dans `type: result`. Latence mesurée : 1re phrase ~4 s, dont ~2,5 s de démarrage du binaire.
 - Protocole app ↔ cœur : `chunk{id,text}` (phrase) puis `reply{…, streamed: true}` ; l'app enchaîne les envois à la voix (`inOrder`) pour garder l'ordre.
 - Cerveau = **processus Claude Code persistant** (stdin `{"type":"user","message":{"role":"user","content":…}}`, un tour se termine par `type: result`) : 1re phrase ~1,5 s contre ~4 s en one-shot. Un tour à la fois (verrou).
+- Outils de Claude : `--tools ""` ne coupe que les outils intégrés ; les outils MCP restent visibles (`mcp__friday__*`) et `--allowedTools mcp__friday` évite les refus de permission en `-p`.
+- Le Python de python.org n'a pas de certificats racine : `ssl` charge `/etc/ssl/cert.pem` (sinon CERTIFICATE_VERIFY_FAILED).
+- Les cartes de confirmation n'ont **aucun raccourci clavier** : Entrée dans la saisie ne doit jamais autoriser une action Tier 1.
+- Rappels via osascript : 1er appel lent (~14 s, lancement de Rappels / autorisation Automatisation).
+- 2026-11-14 : mémoire = **SQLite + FTS5** (`unicode61 remove_diacritics 2`), pas de Chroma (onnxruntime absent sous 3.15). Requête : mots vides retirés, racine grossière (mot ≥ 7 lettres → 2 dernières retirées), préfixe `"x"*` ; `recall` en OU, `forget` en ET (évite d'effacer trop). Effacement réel = `PRAGMA secure_delete=ON` + `optimize` FTS5 + `wal_checkpoint(TRUNCATE)`.
+- Droit à l'oubli : effacer le fait de `memory.db` ne suffit pas, la conversation persistante de Claude le garde ; `HybridBrain` appelle `reset()` après un oubli.
 - Conductor : interface `IntentClassifier` prévue pour brancher semantic-router puis Haiku en phase 3.

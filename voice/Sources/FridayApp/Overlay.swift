@@ -1,5 +1,6 @@
 import AppKit
 import FridayUICore
+import FridayVoiceCore
 import SwiftUI
 
 /// Panneau flottant non activant : visible sur tous les Spaces et au-dessus des apps plein écran.
@@ -137,7 +138,7 @@ struct OverlayView: View {
                 StateLabel(state: model.avatar, text: model.statusLabel)
             }
             StatusRow(model: model)
-            ChatThread(messages: model.messages, thinking: model.isThinking)
+            ChatThread(messages: model.messages, thinking: model.isThinking) { model.answerConfirm($0, ok: $1) }
             HStack(spacing: 8) {
                 pill("Rappel", "bell", "Rappelle-moi de ")
                 pill("Tâche", "checkmark.square", "Ajoute la tâche ")
@@ -179,11 +180,20 @@ struct StatusRow: View {
 struct ChatThread: View {
     let messages: [ChatMessage]
     var thinking = false
+    var answer: (Int, Bool) -> Void = { _, _ in }
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(messages) { m in
+                        if let c = m.confirm {
+                            ConfirmCard(request: c, answer: answer).id(m.id)
+                        } else if m.isNotice {
+                            Label(m.text, systemImage: "checkmark.circle")
+                                .font(.fCaption).foregroundStyle(Theme.textSecondary)
+                                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12)
+                                .id(m.id)
+                        } else {
                         HStack {
                             if !m.fromFriday { Spacer(minLength: 40) }
                             Text(Self.render(m.text))
@@ -198,6 +208,7 @@ struct ChatThread: View {
                             if m.fromFriday { Spacer(minLength: 40) }
                         }
                         .id(m.id)
+                        }
                     }
                     if thinking {
                         HStack(spacing: 8) {
@@ -226,5 +237,35 @@ struct ChatThread: View {
     static func render(_ text: String) -> AttributedString {
         (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
             ?? AttributedString(text)
+    }
+}
+
+/// Action Tier 1 : Friday attend l'accord du maître (refus par défaut après 60 s).
+struct ConfirmCard: View {
+    let request: ConfirmRequest
+    let answer: (Int, Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Autorisation requise", systemImage: "lock.shield").font(.fCaption).foregroundStyle(Theme.textSecondary)
+            Text(request.summary).font(.fBody).foregroundStyle(Theme.textPrimary).fixedSize(horizontal: false, vertical: true)
+            if request.state == .pending {
+                HStack(spacing: 8) {
+                    Button("Refuser") { answer(request.id, false) }
+                        .buttonStyle(SurfaceButtonStyle())
+                    Button("Autoriser") { answer(request.id, true) }
+                        .buttonStyle(SurfaceButtonStyle())   // pas de raccourci : Entrée ne doit jamais autoriser
+                }
+            } else {
+                Label(request.statusText, systemImage: request.state == .allowed ? "checkmark.circle" : "xmark.circle")
+                    .font(.fCaption).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.textSecondary.opacity(0.5), lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Autorisation requise : \(request.summary). \(request.statusText)")
     }
 }
