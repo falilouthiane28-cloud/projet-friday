@@ -12,7 +12,7 @@ import sys
 
 from .audit import AuditLog
 from .brain import Brain, HybridBrain, LocalBrain
-from .claude_brain import ClaudeCodeBrain, find_claude_binary
+from .claude_brain import PersistentClaudeBrain, find_claude_binary
 from .conductor import Conductor
 from .config import FridayConfig, load_config
 from .guardrails import GuardrailsEngine
@@ -55,7 +55,7 @@ def make_brain(cfg: FridayConfig, soul: dict) -> Brain:
         print("Claude Code introuvable : réponses locales seulement.", file=sys.stderr)
         return local
     workdir = cfg.audit_db_path.parent / "claude"      # sessions Claude Code de Friday, hors du dépôt
-    return HybridBrain(local, ClaudeCodeBrain(binary, soul, workdir, cfg.claude_model, cfg.claude_timeout_s))
+    return HybridBrain(local, PersistentClaudeBrain(binary, soul, workdir, cfg.claude_model, cfg.claude_timeout_s))
 
 
 def main() -> None:

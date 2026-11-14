@@ -3,9 +3,10 @@
 > Entrée datée à chaque grosse modification. Dernière entrée en haut.
 
 ## En cours
-- Phase 3 commencée. Étape 1 (streaming) faite, non commitée. **Prochaine étape** : processus Claude Code persistant (`--input-format stream-json`, un seul démarrage) pour passer sous 2 s ; mesure actuelle : 1re phrase à ~4 s (démarrage de Claude Code ~2,5 s), puis étape 2 de la phase 3 (outils de Claude sous guardrails, confirmation Tier 1 dans la bulle), étape 3 (agents recherche web, rappels), test spec « Ligue 1 + rappel ». Voix validée au micro réel le 14/11 ; app lancée avec `FRIDAY_DEBUG_AUDIO=1 voice/.build/release/friday-app`.
+- Phase 3 commencée. Étapes 1 (streaming) et 1 bis (processus persistant, 1re phrase en 1,5-1,9 s) faites. **Prochaine étape** : étape 2 de la phase 3 (outils de Claude sous guardrails, confirmation Tier 1 dans la bulle), étape 3 (agents recherche web, rappels), test spec « Ligue 1 + rappel ». Voix validée au micro réel le 14/11 ; app lancée avec `FRIDAY_DEBUG_AUDIO=1 voice/.build/release/friday-app`.
 
 ## Fait
+- 2026-11-14 — Processus Claude Code persistant (`PersistentClaudeBrain`, `--input-format stream-json`), préchauffé au lancement, relancé avec `--resume` s'il meurt, tué par « Nouvelle conversation » ; style vocal par préfixe « [voix] ». 1re phrase en 1,55 s / 1,90 s (au lieu de ~4 s). 86 tests pytest.
 - 2026-11-14 — Phase 3, étape 1 : réponses de Claude en flux (`stream-json` + `--include-partial-messages`), découpées en phrases (`SentenceSplitter`), envoyées en `chunk` ; la voix lit dès la 1re phrase (file de phrases dans `Speaker`, `VoiceSession.onSayMore`), le fil se remplit au fur et à mesure. 84 vérifications Swift, 83 tests pytest, selftest verts.
 - 2026-11-14 — Premier test vocal réel réussi (« Friday… » → réponse lue, TTFA 4,8 s via Claude). Fin d'énoncé allongée de 0,7 à 1,2 s : une hésitation coupait la phrase. 78 vérifications Swift.
 - 2026-11-14 — Bug voix trouvé : avec l'annulation d'écho, le micro donne 3 canaux et la conversion directe vers mono 16 kHz produisait un silence total, donc aucune transcription. `MicConverter` extrait le canal 0 (voix traitée). Vérifié avec `friday-voice --transcribe <wav> --channels 3`. Diagnostic `FRIDAY_DEBUG_AUDIO=1` (niveau, conversion, texte entendu, raccourci). Raccourci ⌃⌥Espace vérifié (→ écoute).

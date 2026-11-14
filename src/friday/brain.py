@@ -70,6 +70,14 @@ class HybridBrain:
         if hasattr(self.remote, "reset"):
             self.remote.reset()
 
+    async def prewarm(self) -> None:
+        if hasattr(self.remote, "prewarm"):
+            await self.remote.prewarm()
+
+    async def close(self) -> None:
+        if hasattr(self.remote, "close"):
+            await self.remote.close()
+
     async def respond(self, text: str, decision: RoutingDecision, source: str = "text") -> str:
         if (reply := self.local.quick(text)) is not None:
             return reply

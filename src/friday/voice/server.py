@@ -86,10 +86,15 @@ class CoreServer:
             ready["claude_binary"] = str(binary)     # pour « Connecter Claude Code… » dans l'app
         emit(ready)
         pending: set[asyncio.Task[None]] = set()
+        if hasattr(self.brain, "prewarm"):           # Claude Code démarre pendant que l'app s'ouvre
+            warm = asyncio.create_task(self._prewarm())
+            pending.add(warm)
+            warm.add_done_callback(pending.discard)
         while True:
             line = await loop.run_in_executor(None, stdin.readline)
             if not line:                       # stdin fermé : l'app s'est arrêtée
                 await asyncio.gather(*pending)
+                await self._close()
                 return 0
             if not line.strip():
                 continue
@@ -100,6 +105,7 @@ class CoreServer:
                 continue
             if msg["type"] == "shutdown":
                 await asyncio.gather(*pending)     # les réponses en cours partent avant l'arrêt
+                await self._close()
                 return 0
             if msg["type"] == "ask":              # Claude peut prendre plusieurs secondes : en parallèle
                 task = asyncio.create_task(self._answer(msg, emit))
@@ -114,6 +120,16 @@ class CoreServer:
                 continue
             if out is not None:
                 emit(out)
+
+    async def _prewarm(self) -> None:
+        try:
+            await self.brain.prewarm()
+        except Exception:
+            self._log.exception("serve.prewarm_failed")
+
+    async def _close(self) -> None:
+        if hasattr(self.brain, "close"):
+            await self.brain.close()
 
     async def _answer(self, msg: dict[str, Any], emit: Callable[[dict[str, Any]], None]) -> None:
         streamer = getattr(self.brain, "stream", None)

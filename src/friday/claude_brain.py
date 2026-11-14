@@ -63,7 +63,11 @@ def clean_env(env: Mapping[str, str]) -> dict[str, str]:
     return {k: v for k, v in env.items() if not _HOST_ENV.match(k)}
 
 
-def system_prompt(soul: Mapping[str, Any], voice: bool) -> str:
+VOICE_TAG = "[voix] "
+
+
+def system_prompt(soul: Mapping[str, Any], voice: bool | None) -> str:
+    """voice=None : session persistante, le style est choisi par message (préfixe « [voix] »)."""
     ident = soul.get("IDENTITY", {})
     rules = soul.get("COMMUNICATION_RULES", [])
     values = soul.get("CORE_VALUES", [])
@@ -75,7 +79,11 @@ def system_prompt(soul: Mapping[str, Any], voice: bool) -> str:
         "Règles : " + " ; ".join(rules) + ".",
         "Tu n'as aucun outil pour l'instant : n'affirme jamais avoir fait une action sur la machine.",
     ]
-    if voice:
+    if voice is None:
+        lines.append(f"Si un message commence par « {VOICE_TAG.strip()} », ta réponse sera lue à voix haute : 1 à 2 phrases, "
+                     "sans markdown, sans liste, sans emoji. Sinon, elle s'affiche dans une petite fenêtre de discussion : "
+                     "concise, markdown léger accepté.")
+    elif voice:
         lines.append("Cette réponse sera lue à voix haute : 1 à 2 phrases, sans markdown, sans liste, "
                      "sans emoji, nombres écrits simplement.")
     else:
@@ -259,3 +267,95 @@ class ClaudeCodeBrain:
                     self.session_id = None
                     continue
                 raise
+
+
+class PersistentClaudeBrain(ClaudeCodeBrain):
+    """Un seul processus Claude Code gardé ouvert (`--input-format stream-json`) : pas de démarrage
+    à chaque question (1re phrase ~1,2 s au lieu de ~4 s) et conversation suivie dans le processus."""
+
+    def __init__(self, *args: Any, spawner: Callable[..., Awaitable[Any]] | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.spawner = spawner or self._spawn
+        self._proc: Any = None
+        self._lock = asyncio.Lock()
+
+    def persistent_command(self) -> list[str]:
+        cmd = [str(self.binary), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+               "--include-partial-messages", "--model", self.model, "--tools", "", "--strict-mcp-config",
+               "--setting-sources", "", "--system-prompt", system_prompt(self.soul, None)]
+        if self.session_id:                          # reprise après un arrêt du processus
+            cmd += ["--resume", self.session_id]
+        return cmd
+
+    async def _spawn(self, cmd: Sequence[str], env: Mapping[str, str], cwd: Path) -> Any:
+        return await asyncio.create_subprocess_exec(
+            *cmd, env=dict(env), cwd=cwd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, limit=1 << 22)
+
+    def _alive(self) -> bool:
+        return self._proc is not None and self._proc.returncode is None
+
+    async def prewarm(self) -> None:
+        """Démarre le processus à l'avance (au lancement de Friday)."""
+        async with self._lock:
+            await self._ensure()
+
+    async def _ensure(self) -> None:
+        if not self._alive():
+            self.workdir.mkdir(parents=True, exist_ok=True)
+            self._proc = await self.spawner(self.persistent_command(), self.env, self.workdir)
+
+    def reset(self) -> None:
+        super().reset()
+        self._kill()
+
+    def _kill(self) -> None:
+        if self._alive():
+            self._proc.kill()
+        self._proc = None
+
+    async def close(self) -> None:
+        self._kill()
+
+    async def stream(self, text: str, decision: RoutingDecision, source: str = "text") -> AsyncIterator[str]:
+        async with self._lock:                       # un tour à la fois dans le processus
+            for attempt in (0, 1):
+                await self._ensure()
+                content = (VOICE_TAG if source == "voice" else "") + text
+                got_text = False
+                result: dict[str, Any] | None = None
+                try:
+                    self._proc.stdin.write((json.dumps({"type": "user", "message": {"role": "user", "content": content}},
+                                                       ensure_ascii=False) + "\n").encode())
+                    await self._proc.stdin.drain()
+                    async with asyncio.timeout(self.timeout):
+                        while result is None:
+                            raw = await self._proc.stdout.readline()
+                            if not raw:                  # processus mort
+                                break
+                            parsed = parse_stream_line(raw.decode(errors="replace"))
+                            if parsed is None:
+                                continue
+                            kind, value = parsed
+                            if kind == "delta":
+                                got_text = True
+                                yield value
+                            else:
+                                result = value
+                except TimeoutError:
+                    self._kill()
+                    raise ClaudeError(f"Claude n'a pas répondu en {int(self.timeout)} secondes.") from None
+                except (BrokenPipeError, ConnectionResetError):
+                    result = None
+                if result is None:
+                    self._kill()
+                    if attempt == 0 and not got_text:    # processus perdu : on le relance une fois
+                        self._log.warning("claude.process_restart")
+                        continue
+                    raise ClaudeError("Claude Code s'est arrêté pendant la réponse.")
+                _, session = parse_result(1 if result.get("is_error") else 0, json.dumps(result))
+                self.session_id = session or self.session_id
+                return
+
+    async def respond(self, text: str, decision: RoutingDecision, source: str = "text") -> str:
+        return "".join([d async for d in self.stream(text, decision, source)]).strip()

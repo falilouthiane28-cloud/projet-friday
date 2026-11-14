@@ -169,3 +169,93 @@ def test_stream_connexion_requise(tmp_path):
         return [d async for d in h.stream("raconte", decision(), "text")]
 
     assert asyncio.run(collect()) == [LOGIN_HELP]
+
+
+# --- Processus persistant ---
+from friday.claude_brain import VOICE_TAG, PersistentClaudeBrain  # noqa: E402
+
+
+class FakeProc:
+    """Faux Claude Code persistant : à chaque message reçu, rejoue la réponse suivante."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.sent = []
+        self.returncode = None
+        self.queue = []
+        proc = self
+
+        class In:
+            def write(self, data):
+                proc.sent.append(json.loads(data))
+                proc.queue.extend((line + "\n").encode() for line in proc.replies.pop(0))
+
+            async def drain(self):
+                pass
+
+        class Out:
+            async def readline(self):
+                return proc.queue.pop(0) if proc.queue else b""
+
+        self.stdin, self.stdout = In(), Out()
+
+    def kill(self):
+        self.returncode = -9
+
+
+def persistent(tmp_path, *procs):
+    spawned = []
+
+    async def spawner(cmd, env, cwd):
+        spawned.append(list(cmd))
+        return procs[len(spawned) - 1]
+
+    b = PersistentClaudeBrain(Path("/bin/claude"), SOUL, tmp_path, env={}, spawner=spawner)
+    return b, spawned
+
+
+def test_persistant_un_seul_processus_et_style_par_message(tmp_path):
+    proc = FakeProc([[delta_line("Bonjour."), result_line("Bonjour.", "s9")],
+                     [delta_line("Rome."), result_line("Rome.", "s9")]])
+    b, spawned = persistent(tmp_path, proc)
+
+    async def scenario():
+        await b.prewarm()
+        a = [d async for d in b.stream("salut", decision(), "text")]
+        c = [d async for d in b.stream("capitale de l'Italie", decision(), "voice")]
+        return a, c
+
+    assert asyncio.run(scenario()) == (["Bonjour."], ["Rome."])
+    assert len(spawned) == 1                                            # préchauffé, jamais relancé
+    cmd = spawned[0]
+    assert cmd[cmd.index("--input-format") + 1] == "stream-json" and cmd[cmd.index("--tools") + 1] == ""
+    assert "[voix]" in cmd[cmd.index("--system-prompt") + 1]
+    assert [m["message"]["content"] for m in proc.sent] == ["salut", VOICE_TAG + "capitale de l'Italie"]
+    assert b.session_id == "s9"
+
+
+def test_persistant_relance_avec_resume_si_le_processus_meurt(tmp_path):
+    dead = FakeProc([[]])                                               # meurt sans répondre
+    first = FakeProc([[delta_line("Un."), result_line("Un.", "s1")]])
+    second = FakeProc([[delta_line("Deux."), result_line("Deux.", "s1")]])
+    b, spawned = persistent(tmp_path, first, dead, second)
+
+    async def scenario():
+        out = [d async for d in b.stream("a", decision())]
+        first.returncode = 0                                            # le processus s'est arrêté entre deux questions
+        out += [d async for d in b.stream("b", decision())]
+        return out
+
+    assert asyncio.run(scenario()) == ["Un.", "Deux."]
+    assert len(spawned) == 3 and spawned[2][spawned[2].index("--resume") + 1] == "s1"
+
+
+def test_persistant_reset_tue_le_processus(tmp_path):
+    p1 = FakeProc([[delta_line("A."), result_line("A.", "x")]])
+    p2 = FakeProc([[delta_line("B."), result_line("B.", "y")]])
+    b, spawned = persistent(tmp_path, p1, p2)
+    asyncio.run(b.respond("a", decision()))
+    b.reset()
+    assert p1.returncode == -9 and b.session_id is None
+    assert asyncio.run(b.respond("b", decision())) == "B."
+    assert "--resume" not in spawned[1]                                 # nouvelle conversation
