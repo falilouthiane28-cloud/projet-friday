@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Données locales (audit, mémoire, logs)
+data/
+*.db
+*.db-wal
+*.db-shm
+*.log
+
+# Secrets
+.env
+.env.*
+config/*.local.yaml
+
+# macOS / éditeurs
+.DS_Store
+.recovery-placeholder
+.idea/
+.vscode/

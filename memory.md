@@ -1,0 +1,26 @@
+# Memory — faits à retenir
+
+> Faits durables, décisions, préférences. Une ligne par fait.
+
+## Préférences utilisateur
+- Langue de travail : français.
+- Économiser les tokens : réponses courtes, pas de relecture inutile des fichiers.
+- Utilisateur : Thaïne Fallou, « maître » de Friday dans la spec.
+
+## Faits sur le projet
+- 2026-11-12 : spec v1 copiée dans `docs/friday-system-prompt.md`, planche d'expressions dans `img/`.
+- Friday vouvoie par défaut, ton pro avec humour discret, répond en 1-3 phrases pour le simple.
+- 2026-11-13 : direction UI changée en **noir et blanc strict** (yeux LED blancs, fond #000), prompt dans `docs/friday-ui-prompt-monochrome.md`. L'orange est abandonné.
+- Les règles Tier 0 (pas d'exfiltration, pas de code obfusqué, pas d'auto-modification des règles de sécurité, pas d'usurpation, pas de credentials en clair, Lethal Trifecta) sont à coder en dur, hors prompt.
+
+## Décisions
+- Stack révisée 2026-11-13 : livekit-wakeword (Porcupine sans offre gratuite depuis le 30/06/2026), Deepgram Flux au lieu de Whisper large-v3, pas de Redis ni pynvml, mem0 + SQLite + Chroma, Tauri 2. Inconnue majeure : TTFT Claude non publié, à mesurer.
+- Design v2 monochrome : corrections HIG dans `docs/revue-design-hig-v2.md` (tertiaire 0.55, focus outline 2px 0.85, surfaces opaques #0A0A0A/#141414/#1C1C1E/#2C2C2E, verre seulement top bar + saisie + overlay natif, icônes Lucide pas d'emoji, police `-apple-system`). `design-system/friday-ai/MASTER.md` réécrit en monochrome le 2026-11-13 (source de vérité UI).
+- Design (v1 orange, obsolète sauf principes) : verre uniquement sur les barres et la fenêtre overlay (vibrancy native), cartes opaques ; texte sur orange = `#08080E` (jamais blanc) ; tertiaire à 0.48 d'opacité ; un seul orange, pas de gradient ; app de barre de menus macOS. Détail dans `design-system/friday-ai/MASTER.md`.
+- Ne jamais relancer ui-ux-pro-max `--persist --force` : il écraserait MASTER.md. Règles clés : pas de texte tertiaire ni de libellé rouge sur la surface #2C2C2E (4,1:1), texte en hex opaques.
+- Bascule de session quand le contexte atteint 70 % (voir `regle.md`).
+- 2026-11-13 : phase 1 codée. Dépendances volontairement minimales (pyyaml, structlog, pytest) ; pas de pydantic (Python système 3.15, risque de wheels manquantes).
+- Guardrails : Tier 0 = 6 règles gelées (`T0-EXFIL`, `T0-OBFUSCATED`, `T0-SELF-MODIFY`, `T0-IMPERSONATION`, `T0-CREDENTIALS`, `T0-TRIFECTA`), évaluées avant tout ; la config YAML ne peut que durcir un tier (planchers en dur, action inconnue = Tier 1, toute sortie externe = Tier 1) ; Tier 0 refusé en config.
+- Fichiers protégés contre Friday : `src/friday/guardrails/`, `audit.py`, `config/`, `SOUL.md`, `data/audit.db`.
+- Audit : pas de texte brut des messages, seulement une empreinte SHA-256 (16 caractères).
+- Conductor : interface `IntentClassifier` prévue pour brancher semantic-router puis Haiku en phase 3.

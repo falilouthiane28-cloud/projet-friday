@@ -1,0 +1,43 @@
+# Configuration de Friday — phase 1 (Fondations)
+# Les règles Tier 0 ne sont pas configurables (codées en dur).
+
+app:
+  name: FRIDAY
+  master: Thaïne Fallou
+  language: fr-FR
+  soul_path: SOUL.md
+
+logging:
+  level: INFO          # DEBUG, INFO, WARNING, ERROR
+  json: true
+
+audit:
+  db_path: data/audit.db
+
+conductor:
+  # En dessous de ce score, l'intention retombe sur « conversation ».
+  min_confidence: 0.3
+
+guardrails:
+  # Tier par action (1 = confirmation, 2 = notifier, 3 = auto + log, 4 = silencieux).
+  # Le moteur applique toujours le tier le plus strict entre ce fichier et ses
+  # planchers codés en dur : on peut durcir une action, jamais l'assouplir.
+  # Action absente de cette liste → Tier 1 (fermé par défaut, codé en dur).
+  actions:
+    file.delete: 1
+    file.move: 1
+    message.send: 1
+    payment.execute: 1
+    reminder.create: 2
+    calendar.create_event: 2
+    home.set_light: 2
+    file.write: 2
+    weather.read: 3
+    web.search: 3
+    system.read_metrics: 3
+    file.read: 3
+    memory.cache_check: 4
+    memory.read: 4
+  # Domaines vers lesquels un envoi sortant est permis (le reste est une exfiltration).
+  allowed_domains:
+    - api.anthropic.com
