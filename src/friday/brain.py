@@ -22,11 +22,7 @@ class Brain(Protocol):
 
 def dire_heure(now: datetime) -> str:
     h, m = now.hour, now.minute
-    if h == 0 and m == 0:
-        return "Il est minuit."
-    if h == 12 and m == 0:
-        return "Il est midi."
-    heures = "une heure" if h == 1 else f"{h} heures"
+    heures = {0: "minuit", 12: "midi", 1: "une heure"}.get(h, f"{h} heures")
     return f"Il est {heures}." if m == 0 else f"Il est {heures} {m:02d}."
 
 

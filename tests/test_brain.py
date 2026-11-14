@@ -9,7 +9,8 @@ from friday.conductor import Conductor
 
 @pytest.mark.parametrize(
     "h, m, attendu",
-    [(10, 5, "Il est 10 heures 05."), (1, 0, "Il est une heure."), (0, 0, "Il est minuit."), (12, 0, "Il est midi.")],
+    [(10, 5, "Il est 10 heures 05."), (1, 0, "Il est une heure."), (0, 0, "Il est minuit."), (12, 0, "Il est midi."),
+     (0, 53, "Il est minuit 53."), (12, 30, "Il est midi 30."), (13, 7, "Il est 13 heures 07.")],
 )
 def test_dire_heure(h, m, attendu):
     assert dire_heure(datetime(2026, 11, 14, h, m)) == attendu
