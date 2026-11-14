@@ -317,3 +317,99 @@ def test_web_read_lit_la_page_et_refuse_le_local():
     with pytest.raises(ToolError):
         asyncio.run(local.run({"url": "http://localhost/admin"}))
     assert tool.action == "web.read"
+
+
+# --- Calendrier (faux runner, jamais l'app Calendrier) ---
+
+from friday.tools.builtin import calendar_create_tool, calendar_read_tool  # noqa: E402
+
+DENIED = "execution error: Not authorized to send Apple events to Calendar. (-1743)"
+
+
+def test_agenda_lecture_osascript_et_mise_en_forme():
+    seen = []
+
+    async def runner(cmd):
+        seen.append(cmd)
+        return 0, ("2026-11-17T10:00\t2026-11-17T11:00\tDentiste\tPerso\t12 rue X\n"
+                   "2026-11-16T00:00\t2026-11-17T00:00\tFérié\tJours fériés\t\n"), ""
+    tool = calendar_read_tool(runner)
+    args = tool.validate({"start": "2026-11-16", "days": 7})
+    text = asyncio.run(tool.run(args))
+    assert seen[0][0] == "osascript" and seen[0][1] == "-e" and seen[0][3:] == ["2026", "11", "16", "7"]
+    assert "whose start date < d2 and end date > d1" in seen[0][2]
+    assert text.splitlines() == [
+        "Agenda du 2026-11-16 au 2026-11-22 (2 événement(s), heures locales) :",
+        "- 2026-11-16 journée : Férié [Jours fériés]",
+        "- 2026-11-17 10:00 → 11:00 : Dentiste [Perso] @ 12 rue X"]
+    assert tool.action == "calendar.read"
+
+
+def test_agenda_lecture_vide_et_arguments_invalides():
+    async def runner(cmd):
+        return 0, "\n", ""
+    tool = calendar_read_tool(runner)
+    assert asyncio.run(tool.run({"start": "2026-11-16"})) == "Agenda du 2026-11-16 au 2026-11-22 : aucun événement."
+    with pytest.raises(ToolError):
+        asyncio.run(tool.run({"start": "mardi"}))
+    with pytest.raises(ToolError):
+        asyncio.run(tool.run({"days": 90}))
+    with pytest.raises(ToolError):
+        tool.validate({"days": "7"})
+
+
+def test_agenda_creation_osascript_et_resume():
+    seen = []
+
+    async def runner(cmd):
+        seen.append(cmd)
+        return 0, "Perso\n", ""
+    tool = calendar_create_tool(runner)
+    args = tool.validate({"title": "Dentiste", "start": "2026-11-17T10:00", "end": "2026-11-17T11:30"})
+    assert tool.summary(args) == "Créer l'événement « Dentiste » le 17 novembre 2026 à 10 h jusqu'à 11 h 30"
+    assert asyncio.run(tool.run(args)) == ("Événement « Dentiste » créé dans le calendrier Perso, "
+                                           "le 17 novembre 2026 à 10 h jusqu'à 11 h 30.")
+    assert seen[0][3:] == ["Dentiste", "", "2026", "11", "17", "10", "0", "2026", "11", "17", "11", "30"]
+    assert tool.action == "calendar.create_event"
+
+
+@pytest.mark.parametrize("start,end", [("mardi 10h", "2026-11-17T11:00"), ("2026-11-17T11:00", "2026-11-17T10:00"),
+                                       ("2026-11-17T10:00", "2027-01-17T10:00")])
+def test_agenda_creation_dates_invalides(start, end):
+    calls = []
+
+    async def runner(cmd):
+        calls.append(cmd)
+        return 0, "Perso", ""
+    with pytest.raises(ToolError):
+        asyncio.run(calendar_create_tool(runner).run({"title": "x", "start": start, "end": end}))
+    assert calls == []
+
+
+def test_agenda_sans_autorisation_et_calendrier_inconnu():
+    async def denied(cmd):
+        return 1, "", DENIED
+    with pytest.raises(ToolError, match="Automatisation"):
+        asyncio.run(calendar_read_tool(denied).run({}))
+    with pytest.raises(ToolError, match="Automatisation"):
+        asyncio.run(calendar_create_tool(denied).run({"title": "x", "start": "2026-11-17T10:00",
+                                                       "end": "2026-11-17T11:00"}))
+
+    async def unknown(cmd):
+        return 1, "", "execution error: CALENDRIER_INCONNU (-2700)"
+    with pytest.raises(ToolError, match="introuvable"):
+        asyncio.run(calendar_create_tool(unknown).run({"title": "x", "start": "2026-11-17T10:00",
+                                                        "end": "2026-11-17T11:00", "calendar": "Boulot"}))
+
+    async def slow(cmd):
+        raise TimeoutError
+    with pytest.raises(ToolError, match="ne répond pas"):
+        asyncio.run(calendar_read_tool(slow).run({}))
+
+
+def test_agenda_tiers_de_la_config():
+    from friday.config import load_config
+    from friday.guardrails.tiers import Action
+    engine = GuardrailsEngine(load_config().guardrails.actions)
+    assert engine.tier_for(Action("calendar.read")) == 3
+    assert engine.tier_for(Action("calendar.create_event")) == 2

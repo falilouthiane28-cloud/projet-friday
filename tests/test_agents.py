@@ -40,6 +40,8 @@ def test_registre_par_defaut_et_outils_permis():
     assert reg.allowed_tools(CONDUCTOR) == {"weather_read", "delegate_researcher", "delegate_scheduler",
                                             "delegate_coder"}
     assert reg.allowed_tools("researcher") == {"web_search", "web_read"}
+    assert reg.allowed_tools("scheduler") == {"calendar_read", "calendar_create_event", "reminder_create"}
+    assert set(reg.get("scheduler").writes) == {"calendar_create_event", "reminder_create"}
     assert reg.allowed_tools("inconnu") == frozenset()
 
 
@@ -128,7 +130,8 @@ def test_delegation_lance_un_agent_isole_et_valide(audit, tmp_path):
     ok, out = asyncio.run(gw.call("delegate_scheduler", {"task": "Rappel du match"}))
     assert ok and "actions confirmées" in out and "Nice - PSG" in out
     cmd = seen[0]
-    assert cmd[cmd.index("--allowedTools") + 1] == "mcp__friday__reminder_create"
+    assert cmd[cmd.index("--allowedTools") + 1] == ("mcp__friday__calendar_read,mcp__friday__calendar_create_event,"
+                                                    "mcp__friday__reminder_create")
     assert "--no-session-persistence" in cmd and "--resume" not in cmd
     assert "14 novembre 2026" in cmd[cmd.index("-p") + 1]
     assert "Planificateur" in cmd[cmd.index("--system-prompt") + 1]

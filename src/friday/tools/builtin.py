@@ -1,6 +1,8 @@
 """Outils donnés à Claude Code. Chacun déclare l'action soumise au GuardrailsEngine.
 
 - reminder_create (`reminder.create`, Tier 2) : Rappels macOS via osascript.
+- calendar_read (`calendar.read`, Tier 3) : événements du Calendrier macOS (osascript), lecture seule.
+- calendar_create_event (`calendar.create_event`, Tier 2) : crée un événement dans le Calendrier macOS.
 - weather_read (`weather.read`, Tier 3) : Open-Meteo, sans clé.
 - web_search (`web.search`, Tier 3) : DuckDuckGo (version HTML), lecture seule.
 - web_read (`web.read`, Tier 3) : texte lisible d'une page publique (http/https, jamais le réseau local).
@@ -20,7 +22,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 USER_AGENT = "Friday/0.1 (assistant personnel)"
@@ -133,6 +135,13 @@ def say_date(d: datetime) -> str:
     return f"le {d.day} {_MONTHS[d.month - 1]} {d.year} à {time}"
 
 
+def _raise_if_not_authorized(err: str, app: str) -> None:
+    low = err.lower()
+    if "-1743" in err or "not authorized" in low or "pas autoris" in low or "not allowed" in low:
+        raise ToolError(f"Friday n'a pas l'autorisation d'utiliser {app} (Réglages Système → Confidentialité et "
+                        f"sécurité → Automatisation : autoriser {app} pour le Terminal ou l'app qui lance Friday).")
+
+
 def reminder_tool(runner: CommandRunner = run_command) -> Tool:
     def summary(a: dict[str, Any]) -> str:
         due = parse_due(a.get("due"))
@@ -144,9 +153,7 @@ def reminder_tool(runner: CommandRunner = run_command) -> Tool:
         code, out, err = await runner(["osascript", "-e", _REMINDER_SCRIPT, a["title"], a.get("notes", ""),
                                        "1" if due else "0", *parts])
         if code != 0:
-            if "-1743" in err or "not authorized" in err.lower() or "pas autoris" in err.lower():
-                raise ToolError("Friday n'a pas l'autorisation d'utiliser Rappels (Réglages Système → "
-                                "Confidentialité et sécurité → Automatisation).")
+            _raise_if_not_authorized(err, "Rappels")
             raise ToolError(f"Rappels a refusé la création ({err.strip()[:200] or code}).")
         where = out.strip() or "Rappels"
         return f"Rappel « {a['title']} » créé dans la liste {where}" + (f", {say_date(due)}." if due else ".")
@@ -161,6 +168,204 @@ def reminder_tool(runner: CommandRunner = run_command) -> Tool:
                     "notes": {"type": "string", "description": "Notes facultatives."}},
                 "required": ["title"], "additionalProperties": False},
         run=run, summary=summary)
+
+
+# --- Calendrier ----------------------------------------------------------------------------
+
+# Dates passées en composantes (année, mois, jour, heure, minute) : indépendant de la langue du système.
+_AS_DATE = """
+on mkdate(y, m, d, h, mi)
+    set t to current date
+    set day of t to 1
+    set year of t to y as integer
+    set month of t to m as integer
+    set day of t to d as integer
+    set time of t to (h as integer) * 3600 + (mi as integer) * 60
+    return t
+end mkdate
+
+on iso(t)
+    set s to (year of t as string) & "-" & text -2 thru -1 of ("0" & ((month of t) as integer))
+    set s to s & "-" & text -2 thru -1 of ("0" & (day of t)) & "T"
+    set s to s & text -2 thru -1 of ("0" & (hours of t)) & ":" & text -2 thru -1 of ("0" & (minutes of t))
+    return s
+end iso
+"""
+
+# Filtre `whose` évalué par Calendar lui-même (bien plus rapide qu'une boucle AppleScript sur tous les
+# événements). Limite connue : les occurrences des événements récurrents ne sont pas développées.
+_CALENDAR_READ_SCRIPT = _AS_DATE + """
+on run argv
+    set d1 to my mkdate(item 1 of argv, item 2 of argv, item 3 of argv, 0, 0)
+    set d2 to d1 + (item 4 of argv as integer) * days
+    set out to {}
+    tell application "Calendar"
+        repeat with c in calendars
+            set cname to name of c
+            set evs to (every event of c whose start date < d2 and end date > d1)
+            repeat with e in evs
+                set loc to location of e
+                if loc is missing value then set loc to ""
+                set end of out to (my iso(start date of e)) & tab & (my iso(end date of e)) & tab & \
+                    (summary of e) & tab & cname & tab & loc
+            end repeat
+        end repeat
+    end tell
+    set AppleScript's text item delimiters to linefeed
+    return out as text
+end run
+"""
+
+_CALENDAR_CREATE_SCRIPT = _AS_DATE + """
+on run argv
+    set theTitle to item 1 of argv
+    set calName to item 2 of argv
+    set d1 to my mkdate(item 3 of argv, item 4 of argv, item 5 of argv, item 6 of argv, item 7 of argv)
+    set d2 to my mkdate(item 8 of argv, item 9 of argv, item 10 of argv, item 11 of argv, item 12 of argv)
+    tell application "Calendar"
+        if calName is "" then
+            -- le calendrier virtuel des Rappels se dit « modifiable » : on l'écarte
+            set c to first calendar whose writable is true and name is not "Rappels programmés" and name is not "Scheduled Reminders"
+        else
+            set matches to (every calendar whose name is calName)
+            if (count of matches) is 0 then error "CALENDRIER_INCONNU"
+            set c to item 1 of matches
+        end if
+        make new event at end of events of c with properties {summary:theTitle, start date:d1, end date:d2}
+        return name of c
+    end tell
+end run
+"""
+
+MAX_CALENDAR_DAYS = 31
+CALENDAR_TIMEOUT_S = 60      # 1er appel : lancement de Calendar + autorisation Automatisation
+
+
+def _hm(d: datetime) -> str:
+    return f"{d.hour} h" + (f" {d.minute:02d}" if d.minute else "")
+
+
+def _parts(d: datetime) -> list[str]:
+    return [str(x) for x in (d.year, d.month, d.day, d.hour, d.minute)]
+
+
+async def _osascript(runner: CommandRunner, script: str, args: Sequence[str]) -> tuple[int, str, str]:
+    try:
+        return await runner(["osascript", "-e", script, *args])
+    except (TimeoutError, asyncio.TimeoutError):
+        raise ToolError("Calendrier ne répond pas (lancement trop long) : réessayer dans un instant.") from None
+
+
+def parse_day(value: str | None) -> datetime:
+    if not value:
+        now = datetime.now()
+        return datetime(now.year, now.month, now.day)
+    try:
+        d = datetime.fromisoformat(value.strip()[:10])
+    except ValueError:
+        raise ToolError("Date de début invalide : utiliser le format AAAA-MM-JJ.") from None
+    return datetime(d.year, d.month, d.day)
+
+
+def calendar_read_tool(runner: CommandRunner | None = None) -> Tool:
+    def summary(a: dict[str, Any]) -> str:
+        return f"Lire l'agenda sur {a.get('days', 7)} jours"
+
+    async def run(a: dict[str, Any]) -> str:
+        start = parse_day(a.get("start"))
+        days = a.get("days", 7)
+        if not 1 <= days <= MAX_CALENDAR_DAYS:
+            raise ToolError(f"`days` doit être entre 1 et {MAX_CALENDAR_DAYS}.")
+        code, out, err = await _osascript(runner or _calendar_runner, _CALENDAR_READ_SCRIPT,
+                                          [str(start.year), str(start.month), str(start.day), str(days)])
+        if code != 0:
+            _raise_if_not_authorized(err, "Calendrier")
+            raise ToolError(f"Calendrier a refusé la lecture ({err.strip()[:200] or code}).")
+        events = []
+        for line in out.splitlines():
+            cols = line.split("\t")
+            if len(cols) < 4:
+                continue
+            try:
+                b, e = datetime.fromisoformat(cols[0]), datetime.fromisoformat(cols[1])
+            except ValueError:
+                continue
+            events.append((b, e, cols[2], cols[3], cols[4] if len(cols) > 4 else ""))
+        end = start + timedelta(days=days)
+        head = f"Agenda du {start:%Y-%m-%d} au {end - timedelta(days=1):%Y-%m-%d}"
+        if not events:
+            return head + " : aucun événement."
+        lines = [f"{head} ({len(events)} événement(s), heures locales) :"]
+        for b, e, title, cal, loc in sorted(events):
+            when = (f"{b:%Y-%m-%d} journée" if (b.hour, b.minute, e.hour, e.minute) == (0, 0, 0, 0) and e > b
+                    else f"{b:%Y-%m-%d %H:%M} → {e:%H:%M}" if e.date() == b.date()
+                    else f"{b:%Y-%m-%d %H:%M} → {e:%Y-%m-%d %H:%M}")
+            lines.append(f"- {when} : {title} [{cal}]" + (f" @ {loc}" if loc else ""))
+        return "\n".join(lines)
+
+    return Tool(
+        name="calendar_read", action="calendar.read",
+        description="Lit les événements du Calendrier du Mac (lecture seule) : `days` jours (1 à 31, 7 par défaut) "
+                    "à partir de `start` (AAAA-MM-JJ, aujourd'hui par défaut). Les occurrences des événements "
+                    "récurrents peuvent manquer.",
+        schema={"type": "object", "properties": {
+                    "start": {"type": "string", "description": "Premier jour, AAAA-MM-JJ (facultatif)."},
+                    "days": {"type": "integer", "description": "Nombre de jours, 1 à 31 (7 par défaut)."}},
+                "additionalProperties": False},
+        run=run, summary=summary)
+
+
+def calendar_create_tool(runner: CommandRunner | None = None) -> Tool:
+    def times(a: dict[str, Any]) -> tuple[datetime, datetime]:
+        b, e = parse_due(a["start"]), parse_due(a["end"])
+        assert b and e
+        if e <= b:
+            raise ToolError("La fin de l'événement doit être après son début.")
+        if e - b > timedelta(days=MAX_CALENDAR_DAYS):
+            raise ToolError("Événement trop long (plus de 31 jours).")
+        return b, e
+
+    def summary(a: dict[str, Any]) -> str:
+        b, e = times(a)
+        end = _hm(e) if e.date() == b.date() else say_date(e)
+        cal = f" (calendrier {a['calendar']})" if a.get("calendar") else ""
+        return f"Créer l'événement « {a['title']} » {say_date(b)} jusqu'à {end}{cal}"
+
+    async def run(a: dict[str, Any]) -> str:
+        b, e = times(a)
+        code, out, err = await _osascript(runner or _calendar_runner, _CALENDAR_CREATE_SCRIPT,
+                                          [a["title"], a.get("calendar", ""), *_parts(b), *_parts(e)])
+        if code != 0:
+            _raise_if_not_authorized(err, "Calendrier")
+            if "CALENDRIER_INCONNU" in err:
+                raise ToolError(f"Calendrier introuvable : « {a['calendar']} ».")
+            raise ToolError(f"Calendrier a refusé la création ({err.strip()[:200] or code}).")
+        end = _hm(e) if e.date() == b.date() else say_date(e)
+        return f"Événement « {a['title']} » créé dans le calendrier {out.strip() or '?'}, {say_date(b)} jusqu'à {end}."
+
+    return Tool(
+        name="calendar_create_event", action="calendar.create_event",
+        description="Crée un événement dans le Calendrier du Mac. `start` et `end` : heures locales au format "
+                    "AAAA-MM-JJTHH:MM (calcule « mardi prochain »… depuis la date donnée en tête du message). "
+                    "`calendar` : nom du calendrier, facultatif (sinon le premier modifiable).",
+        schema={"type": "object", "properties": {
+                    "title": {"type": "string", "description": "Titre court (ex. « Dentiste »)."},
+                    "start": {"type": "string", "description": "Début local AAAA-MM-JJTHH:MM."},
+                    "end": {"type": "string", "description": "Fin locale AAAA-MM-JJTHH:MM."},
+                    "calendar": {"type": "string", "description": "Nom du calendrier, facultatif."}},
+                "required": ["title", "start", "end"], "additionalProperties": False},
+        run=run, summary=summary)
+
+
+async def _calendar_runner(cmd: Sequence[str]) -> tuple[int, str, str]:
+    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), CALENDAR_TIMEOUT_S)
+    except (TimeoutError, asyncio.TimeoutError):
+        proc.kill()
+        await proc.wait()
+        raise
+    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
 # --- Météo ---------------------------------------------------------------------------------
@@ -368,5 +573,5 @@ def code_run_tool(python: str | None = None, timeout: float = CODE_TIMEOUT_S) ->
 
 
 def default_tools(default_city: str | None = None) -> list[Tool]:
-    return [reminder_tool(), weather_tool(default_city=default_city), web_search_tool(), web_read_tool(),
+    return [reminder_tool(), calendar_read_tool(), calendar_create_tool(), weather_tool(default_city=default_city), web_search_tool(), web_read_tool(),
             code_run_tool()]

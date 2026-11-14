@@ -83,7 +83,7 @@ def system_prompt(soul: Mapping[str, Any], voice: bool | None, tools: bool = Fal
     if tools:
         lines += [
             "Tu es le Conductor de Friday : tu ne fais pas le travail toi-même, tu le confies à tes agents par les "
-            "outils delegate_* (Chercheur : web ; Planificateur : rappels ; Codeur : Python en bac à sable), avec une "
+            "outils delegate_* (Chercheur : web ; Planificateur : agenda et rappels ; Codeur : Python en bac à sable), avec une "
             "consigne complète (ils ne voient pas la conversation). Lance en parallèle les délégations indépendantes, "
             "puis fais une réponse courte à partir de leurs comptes rendus en respectant les remarques du Validateur. "
             "Pour la météo, utilise directement weather_read. Tous les outils sont contrôlés par les règles de sécurité de "

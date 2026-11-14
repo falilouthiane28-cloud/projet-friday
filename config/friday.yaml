@@ -52,6 +52,7 @@ guardrails:
     file.write: 2
     code.run: 2              # Codeur : Python en bac à sable (sans réseau ni dossier personnel)
     agent.delegate: 3        # délégation à un agent ; ses propres actions repassent par ces règles
+    calendar.read: 3          # Planificateur : lecture de l'agenda (Calendrier macOS)
     weather.read: 3
     web.search: 3
     web.read: 3

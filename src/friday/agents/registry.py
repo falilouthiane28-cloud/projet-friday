@@ -74,10 +74,16 @@ RESEARCHER = AgentSpec(
 
 SCHEDULER = AgentSpec(
     name="scheduler", title="Planificateur",
-    role="Crée des rappels datés dans l'app Rappels du Mac.",
-    tools=("reminder_create",), writes=("reminder_create",),
-    prompt=_COMMON + " Tu es le Planificateur : calcule les dates depuis la date donnée en tête de la tâche, "
-                     "crée les rappels demandés, et redonne pour chacun le titre et l'échéance confirmés par l'outil.")
+    role="Lit l'agenda du Mac (Calendrier), y crée des événements et crée des rappels datés (Rappels).",
+    tools=("calendar_read", "calendar_create_event", "reminder_create"),
+    writes=("calendar_create_event", "reminder_create"),
+    prompt=_COMMON + " Tu es le Planificateur : calcule les dates depuis la date donnée en tête de la tâche. "
+                     "Pour une question sur l'agenda, lis-le avec calendar_read et résume les événements. Avant de "
+                     "créer un événement, lis l'agenda sur la période concernée ; s'il chevauche un événement "
+                     "existant, crée-le quand même si la tâche le demande, mais signale le conflit (titre et heures). "
+                     "Un rendez-vous avec horaire va dans le Calendrier (calendar_create_event), une chose à ne pas "
+                     "oublier dans Rappels (reminder_create). Redonne pour chaque création le titre et les dates "
+                     "confirmés par l'outil.")
 
 CODER = AgentSpec(
     name="coder", title="Codeur",
