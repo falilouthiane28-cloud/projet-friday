@@ -26,7 +26,8 @@ check(s.onTick(now: 0.5).isEmpty, "rien dit : on attend")
 check(s.onTranscript("hey friday quelle heure", now: 1.0).isEmpty, "commande partielle")
 check(s.onTranscript("hey friday quelle heure est-il", now: 1.3).isEmpty, "commande complète")
 check(s.onTick(now: 1.6).isEmpty, "silence trop court")
-check(s.onTick(now: 2.0) == [.utterance("quelle heure est il"), .state(.processing), .resetTranscript], "fin d'énoncé → processing")
+check(s.onTick(now: 2.0).isEmpty, "0,7 s de silence : hésitation, on attend encore")
+check(s.onTick(now: 2.5) == [.utterance("quelle heure est il"), .state(.processing), .resetTranscript], "fin d'énoncé → processing")
 check(s.state == .processing, "état processing")
 check(s.onSay("Il est dix heures.", now: 2.3) == [.state(.speaking), .speak("Il est dix heures."), .resetTranscript], "processing → speaking")
 check(s.onSpeechFinished(now: 4) == [.state(.idle), .resetTranscript], "speaking → idle")
@@ -35,7 +36,14 @@ check(s.onSpeechFinished(now: 4) == [.state(.idle), .resetTranscript], "speaking
 var s2 = VoiceSession()
 _ = s2.onTranscript("hey friday allume la lumiere", now: 0)
 check(s2.state == .listening && s2.command == "allume la lumiere", "commande dans la même phrase")
-check(s2.onTick(now: 0.8).first == .utterance("allume la lumiere"), "énoncé émis")
+check(s2.onTick(now: 1.2).first == .utterance("allume la lumiere"), "énoncé émis")
+
+// --- Hésitation au milieu de la phrase (cas réel du 14/11) ---
+var h = VoiceSession()
+_ = h.onTranscript("friday aujourd'hui", now: 0)
+check(h.onTick(now: 0.9).isEmpty, "pause de 0,9 s : la phrase continue")
+_ = h.onTranscript("friday aujourd'hui on est le combien", now: 1.0)
+check(h.onTick(now: 2.2).first == .utterance("aujourd'hui on est le combien"), "phrase entière envoyée")
 
 // --- Timeout d'écoute ---
 var s3 = VoiceSession()
@@ -49,7 +57,7 @@ check(s4.onTranscript("la météo", now: 0.5).isEmpty, "écho ignoré")
 check(s4.onTranscript("stop", now: 0.6).isEmpty, "un seul mot ignoré")
 check(s4.onTranscript("non arrête ça", now: 0.8) == [.stopSpeaking, .bargeIn, .state(.listening)], "barge-in")
 check(s4.command == "non arrete ca", "commande reprise après barge-in")
-check(s4.onTick(now: 1.6).first == .utterance("non arrete ca"), "la nouvelle commande part au cerveau")
+check(s4.onTick(now: 2.0).first == .utterance("non arrete ca"), "la nouvelle commande part au cerveau")
 
 // --- Stop et nouvelle réponse pendant qu'on parle ---
 var s5 = VoiceSession()
@@ -87,7 +95,7 @@ var m = VoiceSession()
 check(m.onListen(now: 0) == [.state(.listening), .resetTranscript], "idle → listening sans wake word")
 check(m.onListen(now: 0.1).isEmpty, "déjà à l'écoute")
 _ = m.onTranscript("quelle heure est-il", now: 0.5)
-check(m.onTick(now: 1.3) == [.utterance("quelle heure est il"), .state(.processing), .resetTranscript], "commande sans wake word")
+check(m.onTick(now: 1.7) == [.utterance("quelle heure est il"), .state(.processing), .resetTranscript], "commande sans wake word")
 _ = m.onSay("Il est dix heures.", now: 2)
 check(m.onListen(now: 2.5) == [.stopSpeaking, .state(.listening), .resetTranscript], "écoute coupe la parole")
 
