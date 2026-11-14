@@ -7,6 +7,8 @@ import sys
 
 import structlog
 
+from .redact import structlog_processor
+
 
 def setup_logging(level: str = "INFO", json: bool = True) -> None:
     lvl = getattr(logging, level.upper(), logging.INFO)
@@ -17,6 +19,7 @@ def setup_logging(level: str = "INFO", json: bool = True) -> None:
             structlog.processors.add_log_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             structlog.processors.format_exc_info,
+            structlog_processor,             # aucun identifiant en clair dans les logs
             renderer,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(lvl),

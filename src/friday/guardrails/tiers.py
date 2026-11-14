@@ -60,10 +60,12 @@ class Action:
     code: str | None = None                     # code à exécuter, s'il y en a
     target_path: str | None = None              # fichier visé, s'il y en a
     send_as: str | None = None                  # identité d'expéditeur demandée
+    taint_sources: tuple[str, ...] = ()         # contenus non fiables lus avant cette action (web, domotique…)
 
     @property
     def untrusted(self) -> bool:
-        return self.has_untrusted_input or any(isinstance(v, Tainted) for v in self.params.values())
+        return (self.has_untrusted_input or bool(self.taint_sources)
+                or any(isinstance(v, Tainted) for v in self.params.values()))
 
 
 @dataclass(frozen=True)

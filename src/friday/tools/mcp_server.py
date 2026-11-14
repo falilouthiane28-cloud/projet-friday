@@ -5,7 +5,10 @@ Claude Code le lance (via `--mcp-config`) ; il parle JSON-RPC 2.0 sur stdin/stdo
 Unix de `ToolGateway`. Toute la logique (outils, guardrails, confirmation, audit) reste
 dans le cœur : ce fichier ne décide rien et n'importe pas le paquet `friday`.
 
-    python -I mcp_server.py --socket /chemin/tools.sock [--agent researcher --run ab12cd34]
+    python -I mcp_server.py --socket /chemin/tools.sock --token <jeton> [--agent researcher --run ab12cd34]
+
+Le jeton de capacité (donné par la passerelle) est la seule identité crue par le cœur ;
+`--agent`/`--run` ne servent qu'à la lecture humaine.
 """
 
 from __future__ import annotations
@@ -72,7 +75,7 @@ def main(argv: list[str]) -> int:
         print("usage : mcp_server.py --socket <chemin>", file=sys.stderr)
         return 2
     sock_path = argv[argv.index("--socket") + 1]
-    who = {k: argv[argv.index(f"--{k}") + 1] for k in ("agent", "run")
+    who = {k: argv[argv.index(f"--{k}") + 1] for k in ("token", "agent", "run")
            if f"--{k}" in argv and argv.index(f"--{k}") + 1 < len(argv)}
     for line in sys.stdin:
         if not line.strip():

@@ -18,14 +18,18 @@ from .tiers import Action, Tainted
 _PKG_ROOT = Path(__file__).resolve().parents[1]      # src/friday
 _PROJECT_ROOT = _PKG_ROOT.parents[1]
 
-# Fichiers qui portent les règles de sécurité : Friday ne peut jamais les modifier.
+# Fichiers qui portent les règles de sécurité ou le code de Friday : il ne peut jamais les
+# modifier (phase 7 : tout son code, son environnement Python et ses données, pas seulement
+# les guardrails).
 PROTECTED_PATHS: tuple[Path, ...] = (
-    _PKG_ROOT / "guardrails",
-    _PKG_ROOT / "audit.py",
+    _PKG_ROOT,                                        # src/friday : guardrails, passerelle, audit, mémoire…
     _PROJECT_ROOT / "config",
     _PROJECT_ROOT / "SOUL.md",
-    _PROJECT_ROOT / "data" / "audit.db",
-    _PROJECT_ROOT / "data" / "memory.db",
+    _PROJECT_ROOT / "data",                           # audit.db (+ ancre .head), memory.db, sessions Claude
+    _PROJECT_ROOT / ".venv",                          # un module piégé y serait importé au démarrage
+    _PROJECT_ROOT / "pyproject.toml",
+    _PROJECT_ROOT / "voice" / "Sources",
+    _PROJECT_ROOT / "CLAUDE.md",
 )
 PROTECTED_ACTION_PREFIXES: tuple[str, ...] = ("guardrails.", "audit.", "security.")
 

@@ -3,6 +3,7 @@
     python -m friday           → boucle texte
     python -m friday --voice   → pipeline vocal (binaire Swift friday-voice)
     python -m friday --serve   → cœur en sous-processus de l'app friday-app (JSON Lines)
+    python -m friday --verify-audit → vérifie la chaîne d'audit (code 1 si falsifiée)
 """
 
 from __future__ import annotations
@@ -66,10 +67,25 @@ def make_brain(cfg: FridayConfig, soul: dict, audit: AuditLog | None = None) -> 
     return HybridBrain(local, PersistentClaudeBrain(binary, soul, workdir, cfg.claude_model, cfg.claude_timeout_s), memory)
 
 
+def verify_audit(cfg: FridayConfig) -> int:
+    if not cfg.audit_db_path.exists():
+        print(f"Aucun journal d'audit : {cfg.audit_db_path}")
+        return 1
+    audit = AuditLog(cfg.audit_db_path)
+    try:
+        report = audit.verify()
+    finally:
+        audit.close()
+    print(report)
+    return 0 if report.ok else 1
+
+
 def main() -> None:
     i = sys.argv.index("--config") if "--config" in sys.argv else -1
     cfg = load_config(sys.argv[i + 1] if 0 <= i < len(sys.argv) - 1 else None)
     setup_logging(cfg.log_level, cfg.log_json)
+    if "--verify-audit" in sys.argv:
+        sys.exit(verify_audit(cfg))
     soul = load_soul(cfg.soul_path)
     audit = AuditLog(cfg.audit_db_path)
     guardrails = GuardrailsEngine(cfg.guardrails.actions, cfg.guardrails.allowed_domains, audit)

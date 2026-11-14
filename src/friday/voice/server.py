@@ -67,6 +67,7 @@ class CoreServer:
         self.audit = audit
         self.name = name
         self.gateway = gateway
+        self._turns = 0
         self._emit: Callable[[dict[str, Any]], None] | None = None
         self._confirms: dict[int, asyncio.Future[bool]] = {}
         self._confirm_ids = itertools.count(1)
@@ -106,8 +107,14 @@ class CoreServer:
         if kind == "ask":
             text = msg["text"].strip()
             source = msg.get("source", "text")
+            if self.gateway is not None and not self._turns:
+                self.gateway.new_turn()              # CaMeL light : nouvelle demande, contexte de confiance
             decision = self.conductor.handle(text, source=source)
-            reply = await self.brain.respond(text, decision, source)
+            self._turns += 1                         # un tour encore en cours garde sa contamination
+            try:
+                reply = await self.brain.respond(text, decision, source)
+            finally:
+                self._turns -= 1
             out = {"type": "reply", "id": msg["id"], "text": reply,
                    "intent": decision.intent.value, "agent": decision.agent}
             if reply == LOGIN_HELP:

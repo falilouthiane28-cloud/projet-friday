@@ -15,7 +15,7 @@
 - Spec v1 complète dans `docs/friday-system-prompt.md`, plan en 8 phases.
 - UI : suivre `design-system/friday-ai/MASTER.md` (v2 monochrome, intègre la revue `docs/revue-design-hig-v2.md`). La revue v1 orange est obsolète.
 - Stack : voir `reports/Stack vocale et agents Friday.md` avant de coder.
-- État : phases 1 et 2 codées. Cœur Python dans `src/friday/` (`.venv/bin/pytest`), voix et interface Swift dans `voice/` (`friday-voice`, `friday-app`) (`swift run friday-voice-checks`, `swift build -c release`).
+- État : phases 1 à 7 codées (phase 7 : `docs/securite-phase7.md`). Cœur Python dans `src/friday/` (`.venv/bin/pytest`), voix et interface Swift dans `voice/` (`friday-voice`, `friday-app`) (`swift run friday-voice-checks`, `swift build -c release`).
 
 ## Règle de bascule
 Contexte de session ≈ 70 % → mettre à jour `progress.md` et `memory.md`, prévenir l'utilisateur, nouvelle session.

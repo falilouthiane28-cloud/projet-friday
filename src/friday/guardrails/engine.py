@@ -5,6 +5,8 @@ Ordre d'évaluation :
 2. Tier de l'action : le plus strict entre la configuration YAML et les planchers
    codés en dur ci-dessous. La configuration peut durcir, jamais assouplir.
 3. Action inconnue → Tier 1 (fermé par défaut).
+4. Contamination (« CaMeL light », `taint.py`) : après lecture d'un contenu non fiable,
+   une mutation (Tier 2) ou une URL chargée de données passe en confirmation (Tier 1).
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from typing import Mapping
 
 from ..audit import AuditLog
 from ..log import get_logger
+from .taint import escalate
 from .tier0 import check_tier0
 from .tiers import APPROVAL_BY_TIER, Action, Tier, Verdict
 
@@ -65,8 +68,8 @@ class GuardrailsEngine:
         if rule is not None:
             verdict = Verdict(action, Tier.FORBIDDEN, APPROVAL_BY_TIER[Tier.FORBIDDEN], (rule.description,), rule.id)
         else:
-            tier = self.tier_for(action)
-            verdict = Verdict(action, tier, APPROVAL_BY_TIER[tier])
+            tier, reason = escalate(action, self.tier_for(action))
+            verdict = Verdict(action, tier, APPROVAL_BY_TIER[tier], (reason,) if reason else ())
         self._record(verdict)
         return verdict
 
@@ -87,6 +90,8 @@ class GuardrailsEngine:
             "approval": v.approval.value,
             "rule_id": v.rule_id,
         }
+        if v.action.untrusted:
+            fields["taint"] = list(v.action.taint_sources) or ["untrusted"]
         if v.blocked:
             self._log.warning("guardrails.blocked", **fields, reasons=list(v.reasons))
         else:

@@ -30,6 +30,7 @@ import urllib.request
 from collections.abc import Sequence
 from typing import Any
 
+from ..secrets_broker import SecretBroker, SecretUnavailable
 from .builtin import USER_AGENT, CommandRunner, Tool, ToolError, _ssl_context, run_command
 
 KEYCHAIN_SERVICE = "friday-home-assistant"
@@ -82,16 +83,12 @@ class HomeAssistantClient:
         return self.url
 
     async def _token(self) -> str:
+        """Lu par le courtier de secrets à chaque appel, jamais gardé."""
         try:
-            code, out, _ = await self._runner(["security", "find-generic-password", "-s", self.keychain_service,
-                                               "-a", KEYCHAIN_ACCOUNT, "-w"])
-        except (OSError, TimeoutError):
-            code, out = 1, ""
-        token = out.strip()
-        if code != 0 or not token:
+            return await SecretBroker(self._runner).read(self.keychain_service)
+        except (SecretUnavailable, TimeoutError):
             raise ToolError("Jeton Home Assistant absent du trousseau macOS. Le maître doit l'y mettre lui-même : "
-                            + keychain_hint(self.keychain_service) + ".")
-        return token
+                            + keychain_hint(self.keychain_service) + ".") from None
 
     async def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         base = self._check_configured()

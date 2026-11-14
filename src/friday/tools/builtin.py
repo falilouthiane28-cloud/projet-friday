@@ -14,6 +14,7 @@ import asyncio
 import html
 import ipaddress
 import socket
+import tempfile
 import json
 import os
 import re
@@ -522,17 +523,52 @@ CODE_TIMEOUT_S = 10
 MAX_CODE_OUTPUT = 4000
 
 
-def sandbox_profile(workdir: str, home: str) -> str:
-    """Profil sandbox-exec : ni réseau, ni lecture du dossier personnel, écriture dans `workdir` seulement."""
+CODE_MAX_FILE_BYTES = 16 * 1024 * 1024
+CODE_MAX_OPEN_FILES = 64
+
+
+def sandbox_profile(workdir: str, home: str, interpreter_root: str | None = None, tmp_root: str | None = None) -> str:
+    """Profil sandbox-exec (Seatbelt) du Codeur, refus par défaut sur tout ce qui est sensible.
+
+    - aucun réseau (ni TCP, ni socket Unix : la passerelle d'outils est un socket Unix) ;
+    - aucune lecture des dossiers utilisateurs, volumes, dossiers temporaires (dont celui du
+      socket de la passerelle), trousseaux ; écriture dans `workdir` seulement ;
+    - aucun lancement de programme hors de l'interpréteur (ni shell, ni osascript, ni
+      `security`), aucun fork, aucun Apple Event, aucun service Mach (presse-papiers…).
+    La dernière règle qui correspond l'emporte : les `allow` de `workdir` viennent en dernier.
+    """
     q = lambda p: json.dumps(os.path.realpath(p))          # chaîne SBPL entre guillemets  # noqa: E731
+    tmp_root = tmp_root or tempfile.gettempdir()
+    denied_reads = [home, "/Users", "/Volumes", tmp_root, "/private/tmp", "/private/var/folders",
+                    "/Library/Keychains", "/private/var/db"]
+    reads = " ".join(f"(subpath {q(p)})" for p in dict.fromkeys(denied_reads))
+    exec_rule = f"(allow process-exec (subpath {q(interpreter_root)}))\n" if interpreter_root else ""
     return ("(version 1)\n(allow default)\n(deny network*)\n"
-            f"(deny file-read* (subpath {q(home)}))\n(deny file-write*)\n"
+            f"(deny file-read* {reads})\n(deny file-write*)\n"
+            f"(deny process-exec)\n{exec_rule}(deny process-fork)\n(deny appleevent-send)\n(deny mach-lookup)\n"
             f"(allow file-read* file-write* (subpath {q(workdir)}))\n(allow file-write* (literal \"/dev/null\"))\n")
+
+
+def interpreter_root(interpreter: str) -> str:
+    """Dossier à autoriser en exécution : le framework Python relance Python.app depuis sa racine."""
+    real = os.path.realpath(interpreter)
+    marker = ".framework/"
+    return real[: real.index(marker) + len(marker) - 1] if marker in real else real
+
+
+def _limits(cpu_s: int) -> None:
+    """Dans l'enfant, avant exec : plafonds CPU, taille de fichier, descripteurs."""
+    import resource
+    for lim, value in ((resource.RLIMIT_CPU, cpu_s), (resource.RLIMIT_FSIZE, CODE_MAX_FILE_BYTES),
+                       (resource.RLIMIT_NOFILE, CODE_MAX_OPEN_FILES)):
+        try:
+            resource.setrlimit(lim, (value, value))
+        except (ValueError, OSError):
+            pass
 
 
 def code_run_tool(python: str | None = None, timeout: float = CODE_TIMEOUT_S) -> Tool:
     import sys
-    import tempfile
     interpreter = python or os.path.realpath(getattr(sys, "_base_executable", sys.executable))
 
     def summary(a: dict[str, Any]) -> str:
@@ -546,11 +582,13 @@ def code_run_tool(python: str | None = None, timeout: float = CODE_TIMEOUT_S) ->
             script = os.path.join(tmp, "main.py")
             with open(script, "w", encoding="utf-8") as f:
                 f.write(a["code"])
+            profile = sandbox_profile(tmp, os.path.expanduser("~"), interpreter_root(interpreter))
             proc = await asyncio.create_subprocess_exec(
-                "/usr/bin/sandbox-exec", "-p", sandbox_profile(tmp, os.path.expanduser("~")),
-                interpreter, "-I", script, cwd=tmp, stdin=asyncio.subprocess.DEVNULL,
+                "/usr/bin/sandbox-exec", "-p", profile,
+                interpreter, "-I", "-S", script, cwd=tmp, stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                env={"PATH": "/usr/bin:/bin", "HOME": tmp, "LANG": "fr_FR.UTF-8"})
+                env={"PATH": "/usr/bin:/bin", "HOME": tmp, "TMPDIR": tmp, "LANG": "fr_FR.UTF-8"},
+                preexec_fn=lambda: _limits(int(timeout) + 1), start_new_session=True)
             try:
                 out, _ = await asyncio.wait_for(proc.communicate(), timeout)
             except TimeoutError:

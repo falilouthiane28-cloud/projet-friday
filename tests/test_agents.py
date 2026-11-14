@@ -175,7 +175,8 @@ def test_echec_de_l_agent_rendu_proprement(audit, tmp_path):
 # --- Codeur : bac à sable réel ---
 def test_profil_sandbox():
     p = sandbox_profile("/tmp", "/Users/x")
-    assert "(deny network*)" in p and '(deny file-read* (subpath "/Users/x"))' in p
+    assert "(deny network*)" in p and '(deny file-read* (subpath "/Users/x")' in p
+    assert "(deny process-exec)" in p and "(deny mach-lookup)" in p and "(deny appleevent-send)" in p
 
 
 @pytest.mark.skipif(not os.path.exists("/usr/bin/sandbox-exec"), reason="macOS seulement")
