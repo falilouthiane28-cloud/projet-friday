@@ -30,7 +30,7 @@ brain:
 
 tools:
   # Outils de Claude Code (serveur MCP de Friday), chacun soumis aux guardrails ci-dessous.
-  default_city: null     # ville de la météo par défaut (ex. Paris) ; null : Claude demande
+  default_city: Dakar    # ville de la météo par défaut ; null : Claude demande
 
 home_assistant:
   # Domotique (phase 6) : API REST de Home Assistant. null : non configuré (Friday le dit).
