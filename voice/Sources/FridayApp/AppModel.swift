@@ -12,6 +12,11 @@ struct ChatMessage: Identifiable, Equatable {
     let date = Date()
 }
 
+/// Diagnostic (`FRIDAY_DEBUG_AUDIO=1`) : texte entendu par la transcription, sur stderr.
+@Sendable func traceTranscript(_ text: String, _ final: Bool) {
+    FileHandle.standardError.write(Data("[friday-app] transcription\(final ? " (définitive)" : "") : « \(text) »\n".utf8))
+}
+
 /// Dernier niveau micro, écrit par le thread audio, lu par le minuteur de l'interface.
 private final class LevelBox: @unchecked Sendable {
     private let lock = NSLock()
@@ -66,11 +71,26 @@ final class AppModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.apply(self.machine.tick(now: self.now))
+                if self.debugAudio { self.traceAudio() }
                 let target = self.voiceState == .listening ? AudioLevel.normalized(rms: self.level.get()) : 0
                 let next = AudioLevel.smoothed(previous: self.audioLevel, target: target)
                 if abs(next - self.audioLevel) > 0.01 || (next == 0) != (self.audioLevel == 0) { self.audioLevel = next }
             }
         }
+    }
+
+    /// `FRIDAY_DEBUG_AUDIO=1` : journalise le niveau micro maximal toutes les 3 s (diagnostic).
+    private let debugAudio = ProcessInfo.processInfo.environment["FRIDAY_DEBUG_AUDIO"] == "1"
+    private var peakRMS: Float = 0
+    private var lastTrace = Date()
+
+    private func traceAudio() {
+        peakRMS = max(peakRMS, level.get())
+        guard Date().timeIntervalSince(lastTrace) >= 3 else { return }
+        let db = peakRMS > 0 ? 20 * log10(Double(peakRMS)) : -999
+        log(String(format: "micro : crête %.0f dB (voix %@)", db, voiceAvailable ? "active" : "inactive"))
+        peakRMS = 0
+        lastTrace = Date()
     }
 
     // MARK: - Démarrage
@@ -103,10 +123,13 @@ final class AppModel {
 
     private func startVoice() async {
         let box = level
+        // Diagnostic seulement : le texte entendu n'est jamais journalisé hors FRIDAY_DEBUG_AUDIO.
+        let trace: (@Sendable (String, Bool) -> Void)? = debugAudio ? traceTranscript : nil
         let pipeline = await VoicePipeline(
             language: "fr-FR",
             emit: { msg in Task { @MainActor in AppModel.shared.handle(msg) } },
-            level: { box.set($0) }
+            level: { box.set($0) },
+            transcript: trace
         )
         guard let pipeline else { note("Transcription française indisponible sur ce Mac."); return }
         do {
@@ -188,6 +211,7 @@ final class AppModel {
 
     /// Raccourci global (⌃⌥Espace par défaut).
     func hotkey() {
+        log("raccourci global pressé")
         switch VoiceLink.hotkey(expanded: overlayExpanded, voice: voiceState) {
         case .expandAndListen:
             OverlayController.shared.show(model: self)

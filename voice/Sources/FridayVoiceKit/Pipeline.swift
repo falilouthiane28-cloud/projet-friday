@@ -64,14 +64,18 @@ public final class VoicePipeline: @unchecked Sendable {
 
     /// nil si la langue n'est pas supportée par la transcription sur l'appareil.
     public init?(language: String, emit: @escaping @Sendable (OutMessage) -> Void,
-                 level: (@Sendable (Float) -> Void)? = nil) async {
+                 level: (@Sendable (Float) -> Void)? = nil,
+                 transcript: (@Sendable (String, Bool) -> Void)? = nil) async {
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: Locale(identifier: language)) else { return nil }
         let engine = AVAudioEngine()
         listener = Listener(engine: engine, locale: locale)
         let speaker = Speaker(engine: engine, language: language)
         let controller = VoiceController(speaker: speaker, emit: emit)
         self.controller = controller
-        listener.onResult = { text, isFinal, end in Task { await controller.result(text, isFinal: isFinal, end: end) } }
+        listener.onResult = { text, isFinal, end in
+            transcript?(text, isFinal)
+            Task { await controller.result(text, isFinal: isFinal, end: end) }
+        }
         listener.onLevel = level
         speaker.onFirstAudio = { Task { await controller.firstAudio() } }
         speaker.onFinished = { Task { await controller.speechFinished() } }

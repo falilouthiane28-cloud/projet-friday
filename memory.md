@@ -38,4 +38,5 @@
 - 2026-11-14 : cerveau = **Claude Code en headless** (`claude -p --output-format json --tools "" --strict-mcp-config --setting-sources ""`), sessions dans `data/claude/`. Le binaire de l'app Claude (`~/Library/Application Support/Claude/claude-code/<ver>/*/claude.app/Contents/MacOS/claude`) n'est **pas connecté hors de l'app** : il faut `claude` puis `/login` une fois (ou `ANTHROPIC_API_KEY`). Retirer les variables `CLAUDECODE`/`CLAUDE_CODE_*`/`ANTHROPIC_BASE_URL` héritées d'une session parente.
 - Friday ne parle que si la question est vocale (`VoiceLink.shouldSpeak`) ; timeout de traitement vocal porté à 60 s pour Claude.
 - Une vue hébergée dans un NSPanel n'est pas dans une scène SwiftUI : `openWindow`/`openSettings` sont capturés depuis le label du MenuBarExtra (`MenuBarLabel`).
+- Micro avec voice processing = **3 canaux** non entrelacés à 48 kHz ; ne jamais convertir directement vers mono (silence) : prendre le canal 0 (`MicConverter`). `say` ne peut pas tester le micro (l'annulation d'écho retire le son du Mac).
 - Conductor : interface `IntentClassifier` prévue pour brancher semantic-router puis Haiku en phase 3.

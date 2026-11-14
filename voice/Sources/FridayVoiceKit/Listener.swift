@@ -54,29 +54,26 @@ public final class Listener: @unchecked Sendable {
         context.contextualStrings[.general] = ["Friday", "Hey Friday"]
         try await analyzer.setContext(context)
 
-        guard let target = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: inFormat),
-              let converter = AVAudioConverter(from: inFormat, to: target) else {
+        guard let monoIn = MicConverter.monoFormat(for: inFormat),
+              let target = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber], considering: monoIn),
+              let converter = MicConverter(input: inFormat, target: target) else {
             throw NSError(domain: "friday-voice", code: 1, userInfo: [NSLocalizedDescriptionKey: "format audio incompatible"])
         }
         try await analyzer.prepareToAnalyze(in: target)
+        let debug = ProcessInfo.processInfo.environment["FRIDAY_DEBUG_AUDIO"] == "1"
+        if debug { VoiceLog.log("formats : micro \(inFormat) → analyseur \(target)") }
+        let stats = ConversionStats()
 
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
         self.continuation = continuation
 
         input.installTap(onBus: 0, bufferSize: 1024, format: inFormat) { [weak self] buffer, _ in
             if let level = self?.onLevel { level(Listener.rms(buffer)) }
-            let ratio = target.sampleRate / inFormat.sampleRate
-            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 512
-            guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
-            var supplied = false
-            var error: NSError?
-            converter.convert(to: out, error: &error) { _, status in
-                if supplied { status.pointee = .noDataNow; return nil }
-                supplied = true
-                status.pointee = .haveData
-                return buffer
+            let (out, error) = converter.convert(buffer)
+            if let out { continuation.yield(AnalyzerInput(buffer: out)) }
+            if debug, let line = stats.record(inFrames: buffer.frameLength, outFrames: out?.frameLength ?? 0, error: error) {
+                VoiceLog.log(line)
             }
-            if error == nil, out.frameLength > 0 { continuation.yield(AnalyzerInput(buffer: out)) }
         }
 
         Task { [weak self] in
@@ -92,6 +89,21 @@ public final class Listener: @unchecked Sendable {
         try await analyzer.start(inputSequence: stream)
         engine.prepare()
         try engine.start()
+    }
+
+    /// Diagnostic : tampons convertis et erreurs, résumé toutes les 5 s.
+    final class ConversionStats: @unchecked Sendable {
+        private var buffers = 0, empty = 0, errors = 0, inFrames = 0, outFrames = 0
+        private var lastError = ""
+        private var since = Date()
+        func record(inFrames i: AVAudioFrameCount, outFrames o: AVAudioFrameCount, error: NSError?) -> String? {
+            buffers += 1; inFrames += Int(i); outFrames += Int(o)
+            if o == 0 { empty += 1 }
+            if let error { errors += 1; lastError = error.localizedDescription }
+            guard Date().timeIntervalSince(since) >= 5 else { return nil }
+            defer { buffers = 0; empty = 0; errors = 0; inFrames = 0; outFrames = 0; since = Date() }
+            return "conversion : \(buffers) tampons, \(inFrames) → \(outFrames) trames, \(empty) vides, \(errors) erreurs \(lastError)"
+        }
     }
 
     static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
