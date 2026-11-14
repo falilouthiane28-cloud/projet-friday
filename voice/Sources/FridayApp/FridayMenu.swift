@@ -20,6 +20,7 @@ struct FridayMenuItems: View {
             }
             Button("Nouvelle conversation", systemImage: "square.and.pencil") { model.newConversation() }
                 .shortcut(context ? nil : KeyEquivalent("n"))
+            Button("Ce dont Friday se souvient…", systemImage: "brain.head.profile") { model.showMemory() }
         }
         if model.needsLogin && model.claudeBinary != nil {
             Section { Button("Connecter Claude Code…", systemImage: "person.badge.key") { model.connectClaude() } }

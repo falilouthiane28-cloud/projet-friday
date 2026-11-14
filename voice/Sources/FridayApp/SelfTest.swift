@@ -51,6 +51,14 @@ func runSelfTest() async -> Bool {
     check(model.messages.last?.confirm?.state == .expired, "sans réponse → refus affiché")
     model.handle(CoreEvent.notice("Créer le rappel « Appeler Paul »"))
     check(model.messages.last?.isNotice == true, "notification Tier 2 dans le fil")
+    // Mémoire : liste reçue du cœur, oubli en deux temps.
+    model.handle(CoreEvent.memory(facts: [MemoryFact(id: 5, text: "La sœur de l'utilisateur s'appelle Awa", category: "proches")],
+                                  available: true, forgot: nil))
+    check(model.memory.facts.count == 1 && model.memory.phase == .loaded, "faits mémorisés reçus")
+    model.forgetFact(5)
+    check(model.memory.armed == 5, "Oublier → confirmation demandée")
+    model.cancelForget()
+    check(model.memory.armed == nil, "Annuler → rien d'oublié")
     model.shutdown()
     return ok
 }

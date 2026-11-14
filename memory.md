@@ -21,7 +21,7 @@
 - Bascule de session quand le contexte atteint 70 % (voir `regle.md`).
 - 2026-11-13 : phase 1 codée. Dépendances volontairement minimales (pyyaml, structlog, pytest) ; pas de pydantic (Python système 3.15, risque de wheels manquantes).
 - Guardrails : Tier 0 = 6 règles gelées (`T0-EXFIL`, `T0-OBFUSCATED`, `T0-SELF-MODIFY`, `T0-IMPERSONATION`, `T0-CREDENTIALS`, `T0-TRIFECTA`), évaluées avant tout ; la config YAML ne peut que durcir un tier (planchers en dur, action inconnue = Tier 1, toute sortie externe = Tier 1) ; Tier 0 refusé en config.
-- Fichiers protégés contre Friday : `src/friday/guardrails/`, `audit.py`, `config/`, `SOUL.md`, `data/audit.db`.
+- Fichiers protégés contre Friday : `src/friday/guardrails/`, `audit.py`, `config/`, `SOUL.md`, `data/audit.db`, `data/memory.db` (et leurs `-wal`/`-shm`/`-journal`).
 - Audit : pas de texte brut des messages, seulement une empreinte SHA-256 (16 caractères).
 - 2026-11-14 : **voix en Swift natif** (choix de l'utilisateur), cœur en Python ; le binaire `friday-voice` est lancé par Python et dialogue en JSON Lines sur stdin/stdout. Remplace Pipecat, livekit-wakeword, Deepgram et ElevenLabs du rapport (onnxruntime n'existe pas pour Python 3.15).
 - 2026-11-14 : **le cerveau sera Claude Code** (décision de l'utilisateur pour la phase 3). Risque : le démarrage d'une session Claude Code en mode headless prend probablement plusieurs secondes, ce qui sortirait du budget de 2 s. Garder les réponses locales (`LocalBrain`) pour les commandes simples.
@@ -49,3 +49,7 @@
 - 2026-11-14 : mémoire = **SQLite + FTS5** (`unicode61 remove_diacritics 2`), pas de Chroma (onnxruntime absent sous 3.15). Requête : mots vides retirés, racine grossière (mot ≥ 7 lettres → 2 dernières retirées), préfixe `"x"*` ; `recall` en OU, `forget` en ET (évite d'effacer trop). Effacement réel = `PRAGMA secure_delete=ON` + `optimize` FTS5 + `wal_checkpoint(TRUNCATE)`.
 - Droit à l'oubli : effacer le fait de `memory.db` ne suffit pas, la conversation persistante de Claude le garde ; `HybridBrain` appelle `reset()` après un oubli.
 - Conductor : interface `IntentClassifier` prévue pour brancher semantic-router puis Haiku en phase 3.
+- 2026-11-14 : extraction des faits = **Claude Haiku en one-shot séparé** (`claude -p … --no-session-persistence`), lancé après le `reply` ; la conversation persistante n'est jamais touchée. Avec extracteur Claude, `HybridBrain` n'apprend plus par règles à l'énoncé (règles = repli si Claude échoue). Coût : ~4 s de haiku par échange, en fond.
+- Secrets : refusés à l'écriture (`SecretRefused`, audit `memory.refused` avec empreinte) quelle que soit la source ; un passage secret n'est jamais envoyé à l'extracteur (`redact_secrets`).
+- FTS5 `unicode61` ne décompose pas « œ »/« æ » : l'index et les requêtes passent par `_ligatures` (réindexation auto à l'ouverture).
+- `ImageRenderer` (`--snapshot`) ne rend pas le contenu des `ScrollView` : `MemoryPanel(scrolls: false)` pour le rendu.

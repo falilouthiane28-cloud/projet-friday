@@ -4,6 +4,7 @@
 //   friday-app --selftest            → app ↔ cœur Python de bout en bout, sans écran ni micro
 import AppKit
 import FridayUICore
+import FridayVoiceCore
 import KeyboardShortcuts
 import SwiftUI
 
@@ -106,6 +107,15 @@ func snapshot(to dir: String) {
     model.messages += [ChatMessage(fromFriday: false, text: "Qu'est-ce que tu peux faire ?"),
                        ChatMessage(fromFriday: true, text: "Je réponds à vos questions avec **Claude Code**, et je donne l'heure et la date en local.")]
     render(OverlayView(model: model).background(Color(white: 0.25)), "fenetre.png")
+    model.handle(.memory(facts: [
+        MemoryFact(id: 3, text: "La sœur de l'utilisateur s'appelle Awa", category: "proches", createdAt: "2026-11-14T10:00:00+00:00"),
+        MemoryFact(id: 2, text: "L'utilisateur boit son café sans sucre", category: "habitude", createdAt: "2026-11-14T09:00:00+00:00"),
+        MemoryFact(id: 1, text: "L'utilisateur habite à Lyon", category: "identite", createdAt: "2026-11-13T09:00:00+00:00"),
+    ], available: true, forgot: nil))
+    model.showingMemory = true
+    model.forgetFact(2)                               // 2e fait en attente de confirmation
+    render(MemoryPanel(model: model, scrolls: false).padding(16).frame(width: 380, height: 520)
+        .background(Color(white: 0.1)), "fenetre-memoire.png")
 }
 
 let args = CommandLine.arguments

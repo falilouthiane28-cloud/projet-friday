@@ -13,7 +13,7 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 - LLM (rapport) : semantic-router pour les commandes fréquentes → Haiku 5.5 (routage) → Sonnet 5.5 (conversation) / Opus 5.5 (Coder, Researcher). Secours hors ligne Qwen3 8B.
 - Orchestration : Conductor en code (Pydantic AI ou SDK Anthropic) ; Claude Agent SDK pour les agents longs uniquement
 - Mémoire : SQLite + mem0 OSS + Chroma + embeddings bge-m3 (PostgreSQL abandonné)
-- Mémoire (révisé 14/11) : SQLite + FTS5 seulement (`src/friday/memory/`) ; Chroma et bge-m3 écartés tant qu'onnxruntime manque pour Python 3.15, mem0 non utilisé
+- Mémoire (révisé 14/11) : SQLite + FTS5 seulement (`src/friday/memory/`), faits extraits par Claude Haiku après chaque échange (`brain.memory_model`) ; Chroma et bge-m3 écartés tant qu'onnxruntime manque pour Python 3.15, mem0 non utilisé
 - Sécurité : « CaMeL light » (valeurs marquées non fiables), passerelle d'outils deny > ask > allow, Trousseau macOS derrière un broker, sandbox-runtime ou Apple `container`, audit SQLite WAL chaîné
 - Domotique : MCP officiel Home Assistant + hass-client
 - Monitoring : psutil + SMC via ctypes + powermetrics (pynvml abandonné, pas de NVIDIA sur Mac)
@@ -41,7 +41,7 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 - `src/friday/claude_brain.py` (`ClaudeCodeBrain`, `PersistentClaudeBrain`), `brain.py` (`LocalBrain`, `HybridBrain`)
 - `src/friday/tools/` — outils de Claude : `mcp_server.py` (relais MCP stdio sans dépendance, lancé par Claude Code), `gateway.py` (`ToolGateway` : socket Unix, guardrails, confirmation Tier 1, audit), `builtin.py` (rappels osascript, météo Open-Meteo, recherche DuckDuckGo)
 - `src/friday/voice/bridge.py` (pont JSON Lines, mode `--voice`), `src/friday/voice/server.py` (`CoreServer`, mode `--serve` lancé par l'app), `src/friday/brain.py` (`LocalBrain`)
-- `src/friday/memory/` — mémoire phase 4 : `store.py` (`MemoryStore` : faits SQLite + index FTS5, `remember`/`recall`/`forget`/`context_for`, audit), `extractor.py` (`FactExtractor`, `RuleBasedExtractor`)
+- `src/friday/memory/` — mémoire phase 4 : `store.py` (`MemoryStore` : faits SQLite + index FTS5, `remember`/`recall`/`forget`/`context_for`, `alearn` en tâche de fond, audit), `extractor.py` (`FactExtractor`, `RuleBasedExtractor`, repli), `claude_extractor.py` (`ClaudeFactExtractor` : `claude -p` haiku one-shot, JSON), `secrets.py` (filtre en dur : aucun secret mémorisé)
 - `tests/` — pytest (`.venv/bin/pytest`) ; `data/` — base d'audit locale (ignorée par Git)
 
 ## Plan en 8 phases (détail dans la spec, section 11)

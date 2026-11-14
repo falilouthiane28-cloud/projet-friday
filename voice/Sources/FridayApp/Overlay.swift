@@ -138,13 +138,17 @@ struct OverlayView: View {
                 StateLabel(state: model.avatar, text: model.statusLabel)
             }
             StatusRow(model: model)
-            ChatThread(messages: model.messages, thinking: model.isThinking) { model.answerConfirm($0, ok: $1) }
-            HStack(spacing: 8) {
-                pill("Rappel", "bell", "Rappelle-moi de ")
-                pill("Tâche", "checkmark.square", "Ajoute la tâche ")
-                pill("Note", "note.text", "Note que ")
+            if model.showingMemory {
+                MemoryPanel(model: model)
+            } else {
+                ChatThread(messages: model.messages, thinking: model.isThinking) { model.answerConfirm($0, ok: $1) }
+                HStack(spacing: 8) {
+                    pill("Rappel", "bell", "Rappelle-moi de ")
+                    pill("Tâche", "checkmark.square", "Ajoute la tâche ")
+                    pill("Note", "note.text", "Note que ")
+                }
+                InputBar(model: model, compact: true)
             }
-            InputBar(model: model, compact: true)
         }
         .padding(.horizontal, 16).padding(.bottom, 16)
         .frame(width: 380, height: 680)
@@ -267,5 +271,73 @@ struct ConfirmCard: View {
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.textSecondary.opacity(0.5), lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Autorisation requise : \(request.summary). \(request.statusText)")
+    }
+}
+
+/// « Ce dont Friday se souvient… » : faits mémorisés, oubli en deux temps (Oublier → Oui, oublier).
+struct MemoryPanel: View {
+    let model: AppModel
+    var scrolls = true                                // false : rendu --snapshot (ImageRenderer ignore les ScrollView)
+
+    var body: some View {
+        let book = model.memory
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Button { model.cancelForget(); model.showingMemory = false } label: {
+                    Label("Conversation", systemImage: "chevron.left")
+                }
+                .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                .help("Revenir à la conversation").accessibilityLabel("Revenir à la conversation")
+                Spacer()
+            }
+            .font(.fCaption)
+            Text("Ce dont Friday se souvient").font(.fHeadline).foregroundStyle(Theme.textPrimary)
+            if let msg = book.lastMessage {
+                Label(msg, systemImage: "checkmark.circle").font(.fCaption).foregroundStyle(Theme.textSecondary)
+            }
+            if book.facts.isEmpty {
+                Text(book.emptyText).font(.fBody).foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+            } else if scrolls {
+                ScrollView { rows(book).padding(.vertical, 4) }.frame(maxHeight: .infinity)
+            } else {
+                rows(book)
+                Spacer()
+            }
+            Text("Friday ne retient jamais de mot de passe ni de code. Oublier un fait efface aussi la conversation en cours.")
+                .font(.fCaption).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func rows(_ book: MemoryBook) -> some View {
+        LazyVStack(spacing: 8) {
+            ForEach(book.facts) { fact in row(fact, armed: book.armed == fact.id, busy: book.forgetting != nil) }
+        }
+    }
+
+    private func row(_ fact: MemoryFact, armed: Bool, busy: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(fact.text).font(.fBody).foregroundStyle(Theme.textPrimary).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Text([fact.categoryLabel, fact.dayLabel].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.fCaption).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                if armed {
+                    Button("Annuler") { model.cancelForget() }.buttonStyle(SurfaceButtonStyle()).fixedSize()
+                    Button("Oui, oublier") { model.forgetFact(fact.id) }.buttonStyle(SurfaceButtonStyle()).fixedSize()
+                } else {
+                    Button { model.forgetFact(fact.id) } label: { Label("Oublier", systemImage: "trash") }
+                        .buttonStyle(SurfaceButtonStyle()).disabled(busy)
+                        .help("Oublier ce fait").accessibilityLabel("Oublier : \(fact.text)")
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .contain)
     }
 }

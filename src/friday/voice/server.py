@@ -1,11 +1,13 @@
 """Cœur Python en sous-processus de l'app Swift `friday-app` (`python -m friday --serve`).
 
 Protocole JSON Lines (stdin → stdout ; journaux sur stderr) :
-- app → cœur : ask{id, text, source}, metrics{ttfa_ms}, reset, confirm_result{id, ok}, shutdown
+- app → cœur : ask{id, text, source}, metrics{ttfa_ms}, reset, confirm_result{id, ok}, shutdown,
+  memory_list, memory_forget{id}
 - cœur → app : ready{name, brain, tools?}, chunk{id, text} (une phrase, réponse en cours),
   reply{id, text, intent, agent, streamed?, login_required?}, error{message},
   confirm{id, summary, action} (action Tier 1 : Autoriser/Refuser), confirm_expired{id},
-  notice{text} (action Tier 2 exécutée)
+  notice{text} (action Tier 2 exécutée),
+  memory{facts: [{id, text, category, created_at}], available, forgot?} (réponse à memory_list / memory_forget)
 
 Outils : si une `ToolGateway` est fournie, son socket est ouvert au démarrage et Claude Code
 reçoit le serveur MCP relais ; les confirmations Tier 1 passent par l'app.
@@ -48,7 +50,11 @@ def parse_app_message(line: str | bytes) -> dict[str, Any] | None:
         if not isinstance(msg.get("id"), int) or not isinstance(msg.get("ok"), bool):
             return None
         return msg
-    if kind in ("metrics", "reset", "shutdown"):
+    if kind == "memory_forget":
+        if not isinstance(msg.get("id"), int) or isinstance(msg.get("id"), bool):
+            return None
+        return msg
+    if kind in ("metrics", "reset", "shutdown", "memory_list"):
         return msg
     return None
 
@@ -120,7 +126,23 @@ class CoreServer:
             self._deny_pending()
             if hasattr(self.brain, "reset"):
                 self.brain.reset()
+        elif kind == "memory_list":
+            return self._memory_message()
+        elif kind == "memory_forget":
+            memory = getattr(self.brain, "memory", None)
+            forgot = bool(memory is not None and memory.forget_id(msg["id"]))
+            if forgot and hasattr(self.brain, "reset"):   # la conversation de Claude contient encore le fait
+                self.brain.reset()
+            return self._memory_message(forgot=forgot)
         return None
+
+    def _memory_message(self, **extra: Any) -> dict[str, Any]:
+        """Faits mémorisés pour « Ce dont Friday se souvient… » (les plus récents d'abord)."""
+        memory = getattr(self.brain, "memory", None)
+        facts = [] if memory is None else [
+            {"id": f.id, "text": f.text, "category": f.category, "created_at": f.created_at}
+            for f in reversed(memory.all())]
+        return {"type": "memory", "facts": facts, "available": memory is not None, **extra}
 
     async def run(self, stdin: IO[str] | None = None, stdout: IO[str] | None = None) -> int:
         stdin = stdin or sys.stdin

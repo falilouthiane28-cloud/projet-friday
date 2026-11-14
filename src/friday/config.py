@@ -35,6 +35,7 @@ class FridayConfig:
     claude_binary: str | None = None           # None : recherche automatique
     claude_model: str = "sonnet"
     claude_timeout_s: float = 60
+    memory_model: str = "haiku"                # extraction des faits (appel séparé, rapide)
     default_city: str | None = None            # ville de la météo quand l'utilisateur n'en donne pas
 
 
@@ -79,5 +80,6 @@ def load_config(path: str | Path | None = None) -> FridayConfig:
         claude_binary=brain.get("claude_binary"),
         claude_model=str(brain.get("model", "sonnet")),
         claude_timeout_s=float(brain.get("timeout_s", 60)),
+        memory_model=str(brain.get("memory_model", "haiku")),
         default_city=(raw.get("tools") or {}).get("default_city"),
     )

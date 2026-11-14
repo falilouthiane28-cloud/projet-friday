@@ -174,6 +174,33 @@ check(VoiceLink.hotkey(expanded: false, voice: .idle) == .expandAndListen, "racc
 check(VoiceLink.hotkey(expanded: true, voice: .listening) == .stopListening, "raccourci : arrête l'écoute")
 check(VoiceLink.hotkey(expanded: true, voice: .speaking) == .listen, "raccourci : coupe la parole et écoute")
 
+// --- Mémoire : « Ce dont Friday se souvient… » ---
+check(CoreRequest.memoryList.jsonLine() == #"{"type":"memory_list"}"#, "memory_list encodé")
+check(CoreRequest.memoryForget(id: 7).jsonLine() == #"{"id":7,"type":"memory_forget"}"#, "memory_forget encodé")
+let memLine = #"{"type":"memory","available":true,"facts":[{"id":2,"text":"La sœur de l'utilisateur s'appelle Awa","category":"proches","created_at":"2026-11-14T10:00:00+00:00"},{"id":1,"text":"L'utilisateur aime le jazz"},{"text":"sans id"}]}"#
+if case .memory(let facts, let available, let forgot)? = CoreEvent.parse(memLine) {
+    check(facts.count == 2 && available && forgot == nil, "memory lu (fait sans id ignoré)")
+    check(facts[0].categoryLabel == "Proches" && facts[0].dayLabel == "14/11/2026", "catégorie et date lisibles")
+    check(facts[1].categoryLabel == "Divers" && facts[1].dayLabel == "", "valeurs par défaut")
+} else { check(false, "memory lu") }
+check(CoreEvent.parse(#"{"type":"memory"}"#) == nil, "memory sans facts refusé")
+check(CoreEvent.parse(#"{"type":"memory","facts":[],"available":false}"#) == .memory(facts: [], available: false, forgot: nil), "mémoire indisponible lue")
+var book = MemoryBook()
+check(book.open() == .memoryList && book.phase == .loading, "ouverture : liste demandée")
+book.apply(facts: [MemoryFact(id: 1, text: "A"), MemoryFact(id: 2, text: "B")], available: true, forgot: nil)
+check(book.phase == .loaded && book.facts.count == 2, "liste affichée")
+check(book.tapForget(1) == nil && book.armed == 1, "1er appui : confirmation demandée")
+check(book.tapForget(2) == nil && book.armed == 2, "autre fait : la confirmation change de fait")
+check(book.tapForget(2) == .memoryForget(id: 2) && book.armed == nil, "2e appui : oubli envoyé")
+check(book.tapForget(1) == nil && book.armed == nil, "un seul oubli à la fois")
+book.apply(facts: [MemoryFact(id: 1, text: "A")], available: true, forgot: true)
+check(book.facts.map(\.id) == [1] && book.lastMessage == "C'est oublié.", "fait retiré, message affiché")
+check(book.tapForget(99) == nil, "fait inconnu ignoré")
+_ = book.tapForget(1); book.cancel()
+check(book.armed == nil, "annuler la confirmation")
+book.apply(facts: [], available: false, forgot: nil)
+check(book.phase == .unavailable && book.emptyText.contains("pas disponible"), "mémoire indisponible expliquée")
+
 print("\(passed) vérifications OK, \(failures) échec(s)")
 if failures > 0 { exit(1) }
 

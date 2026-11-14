@@ -25,6 +25,7 @@ PROTECTED_PATHS: tuple[Path, ...] = (
     _PROJECT_ROOT / "config",
     _PROJECT_ROOT / "SOUL.md",
     _PROJECT_ROOT / "data" / "audit.db",
+    _PROJECT_ROOT / "data" / "memory.db",
 )
 PROTECTED_ACTION_PREFIXES: tuple[str, ...] = ("guardrails.", "audit.", "security.")
 
@@ -102,8 +103,14 @@ def _self_modification(a: Action, _: tuple[str, ...]) -> bool:
     if a.target_path:
         target = Path(a.target_path).expanduser()
         target = (target if target.is_absolute() else _PROJECT_ROOT / target).resolve()
-        return any(target == p or p in target.parents for p in PROTECTED_PATHS)
+        return any(target == p or p in target.parents or _sqlite_sibling(target, p) for p in PROTECTED_PATHS)
     return False
+
+
+def _sqlite_sibling(target: Path, protected: Path) -> bool:
+    """`audit.db-wal`, `memory.db-shm`… portent les mêmes données que la base protégée."""
+    return (protected.suffix == ".db" and target.parent == protected.parent
+            and target.name in {protected.name + s for s in ("-wal", "-shm", "-journal")})
 
 
 def _impersonation(a: Action, _: tuple[str, ...]) -> bool:

@@ -1,5 +1,7 @@
 """Mémoire de Friday (phase 4) : stockage, rappel, oubli, extraction, audit."""
 
+import json
+
 import pytest
 
 from friday.memory import ExtractedFact, MemoryStore, RuleBasedExtractor, query_terms
@@ -37,11 +39,11 @@ def test_test_de_la_spec_cafe_apres_redemarrage(tmp_path, audit):
 def test_forget_efface_vraiment_y_compris_fts(tmp_path, audit):
     db = tmp_path / "memory.db"
     mem = MemoryStore(db, audit)
-    mem.remember("Le code de la porte du garage est zorglubium", category="maison")
+    mem.remember("La voiture du garage s'appelle zorglubium", category="maison")
     mem.remember("L'utilisateur aime le jazz")
     assert b"zorglubium" in _raw_bytes(db)
 
-    assert mem.forget("oublie le code du garage") == 1
+    assert mem.forget("oublie la voiture du garage") == 1
     assert mem.recall("garage zorglubium") == []
     assert mem._conn.execute(
         "SELECT count(*) FROM facts_fts WHERE facts_fts MATCH 'zorglubium'").fetchone()[0] == 0
@@ -50,7 +52,7 @@ def test_forget_efface_vraiment_y_compris_fts(tmp_path, audit):
 
     assert b"zorglubium" not in _raw_bytes(db)  # ni dans la base, ni dans le WAL
     again = MemoryStore(db, audit)
-    assert again.recall("code garage") == []
+    assert again.recall("voiture garage") == []
     again.close()
 
 
@@ -206,3 +208,200 @@ def test_cerveau_apprend_rappelle_et_oublie(tmp_path, audit):
     ask("Quel est mon café préféré ?")
     assert "cappuccino" not in remote.prompts[-1]
     assert ask("Oublie ma voiture.") == "Je n'avais rien retenu à ce sujet."
+
+
+# --- Secrets : jamais mémorisés (filtre en dur) ---
+from friday.memory import SecretRefused, contains_secret  # noqa: E402
+from friday.memory.claude_extractor import ClaudeFactExtractor, parse_facts  # noqa: E402
+
+
+@pytest.mark.parametrize("text", [
+    "Mon mot de passe Wi-Fi est soleil42",
+    "Le mdp de la box : Azerty!2026",
+    "Le code de la porte, c'est 4512",
+    "Mon code PIN est 1234",
+    "Le digicode de l'immeuble est B2047",
+    "Ma carte : 4111 1111 1111 1111",                # Luhn valide
+    "Mon IBAN est FR76 3000 6000 0112 3456 7890 189",
+    "Le cryptogramme est 123",
+    "Ma clé API est sk-ant-api03-abcdefghijklmnop",
+    "password: hunter22",
+])
+def test_secret_detecte(text):
+    assert contains_secret(text)
+
+
+@pytest.mark.parametrize("text", [
+    "La sœur de l'utilisateur s'appelle Awa",
+    "L'utilisateur habite à Lyon depuis 2019",
+    "L'utilisateur appelle sa mère le 12 de chaque mois",
+    "L'utilisateur prépare un marathon",
+    "Le numéro de bus de l'utilisateur est le 1234567890123",   # pas un numéro Luhn
+])
+def test_fait_anodin_accepte(text):
+    assert not contains_secret(text)
+
+
+def test_remember_refuse_un_secret_et_audite(mem, audit):
+    with pytest.raises(SecretRefused):
+        mem.remember("Mon code PIN est 1234")
+    assert mem.all() == []
+    refused = [e for e in audit.entries() if e.event == "memory.refused"]
+    assert refused and "1234" not in str(refused[0].payload)
+
+
+def test_learn_ignore_les_secrets(tmp_path, audit):
+    class Leaky:
+        def extract(self, utterance):
+            return [ExtractedFact("Le mot de passe de l'utilisateur est soleil42"),
+                    ExtractedFact("L'utilisateur aime le jazz")]
+
+    store = MemoryStore(tmp_path / "m.db", audit, extractor=Leaky())
+    assert [f.text for f in store.learn("…")] == ["L'utilisateur aime le jazz"]
+    assert b"soleil42" not in _raw_bytes(tmp_path / "m.db")
+    store.close()
+
+
+# --- Extraction par Claude ---
+def test_parse_facts():
+    raw = 'Voici : {"facts": [{"text": "La sœur de l\'utilisateur s\'appelle Awa", "category": "proches", ' \
+          '"key": "Proches.Sœur.Prénom", "confidence": 0.9}, {"text": "x"}, {"text": "Fait", "category": "??", ' \
+          '"key": null, "confidence": "abc"}]}'
+    a, b = parse_facts(raw)
+    assert (a.category, a.key, a.confidence) == ("proches", "proches.soeur.prenom", 0.9)
+    assert (b.category, b.key, b.confidence) == ("general", None, 0.8)
+    assert parse_facts('{"facts": []}') == []
+    with pytest.raises(ValueError):
+        parse_facts("pas de json")
+
+
+def _fake_runner(result, calls):
+    async def run(cmd, env, cwd, timeout):
+        calls.append((list(cmd), cwd))
+        return 0, json.dumps({"type": "result", "result": result, "session_id": "s"})
+    return run
+
+
+def test_extracteur_claude_appel_separe(tmp_path):
+    calls = []
+    ex = ClaudeFactExtractor(tmp_path / "claude", tmp_path / "claude-memory", runner=_fake_runner(
+        '{"facts": [{"text": "La sœur de l\'utilisateur s\'appelle Awa", "category": "proches", '
+        '"key": "proches.soeur.prenom", "confidence": 0.9}]}', calls))
+    (fact,) = _asyncio.run(ex.aextract("Ma sœur s'appelle Awa", "Enchantée, Awa !"))
+    assert fact.key == "proches.soeur.prenom"
+    cmd, cwd = calls[0]
+    assert cmd[cmd.index("--model") + 1] == "haiku"
+    assert "--resume" not in cmd and cmd[cmd.index("--tools") + 1] == ""   # one-shot, sans outils
+    assert "--no-session-persistence" in cmd                                 # rien de l'échange gardé sur disque
+    assert cwd == tmp_path / "claude-memory"                                 # sessions à part
+    assert "Ma sœur s'appelle Awa" in cmd[cmd.index("-p") + 1]
+
+
+def _deep(facts=None, fail=False, calls=None):
+    class Deep:
+        async def aextract(self, utterance, reply="", known=()):
+            if calls is not None:
+                calls.append((utterance, reply, list(known)))
+            if fail:
+                raise RuntimeError("Claude absent")
+            return facts or []
+    return Deep()
+
+
+def test_alearn_claude_puis_repli_sur_les_regles(tmp_path, audit):
+    calls = []
+    store = MemoryStore(tmp_path / "m.db", audit, deep_extractor=_deep(
+        [ExtractedFact("La sœur de l'utilisateur s'appelle Awa", "proches", "proches.soeur.prenom", 0.9),
+         ExtractedFact("Le code de la porte est 4512")], calls=calls))
+    facts = _asyncio.run(store.alearn("Ma sœur s'appelle Awa", "Bonjour Awa"))
+    assert [f.text for f in facts] == ["La sœur de l'utilisateur s'appelle Awa"]   # secret filtré
+    assert calls[0][:2] == ("Ma sœur s'appelle Awa", "Bonjour Awa")
+    # un passage secret ne part jamais à l'extracteur, le reste si
+    _asyncio.run(store.alearn("Je bois mon café sans sucre, et mon code de carte bleue est 4821."))
+    assert calls[1][0] == "Je bois mon café sans sucre" and "4821" not in str(calls[1])
+    _asyncio.run(store.alearn("Mon code PIN est 1234."))
+    assert len(calls) == 2                                                   # tout est secret : aucun appel
+    store.close()
+
+    broken = MemoryStore(tmp_path / "b.db", audit, deep_extractor=_deep(fail=True))
+    assert [f.text for f in _asyncio.run(broken.alearn("J'habite à Dakar"))] == ["L'utilisateur habite à Dakar"]
+    broken.close()
+
+
+def test_cerveau_extrait_en_tache_de_fond_apres_la_reponse(tmp_path, audit):
+    order = []
+
+    class SlowDeep:
+        async def aextract(self, utterance, reply="", known=()):
+            order.append(("extract", reply))
+            return [ExtractedFact("La sœur de l'utilisateur s'appelle Awa", "proches", "proches.soeur.prenom", 0.9)]
+
+    remote = EchoBrain()
+    store = MemoryStore(tmp_path / "m.db", audit, deep_extractor=SlowDeep())
+    h = HybridBrain(LocalBrain(), remote, store)
+    d = Conductor().handle("x")
+
+    async def scenario():
+        out = []
+        async for delta in h.stream("Ma sœur s'appelle Awa.", d):
+            out.append(delta)
+            order.append(("delta", delta))
+        assert store.all() == []                  # rien n'a encore bloqué la réponse
+        await h.settle()
+        return out
+
+    assert _asyncio.run(scenario()) == ["ok"]
+    assert order == [("delta", "ok"), ("extract", "ok")]
+    h2 = HybridBrain(LocalBrain(), remote, MemoryStore(tmp_path / "m.db", audit, deep_extractor=SlowDeep()))
+    _asyncio.run(h2.respond("Comment s'appelle ma sœur ?", d))
+    assert "Awa" in remote.prompts[-1] and "[mémoire]" in remote.prompts[-1]
+
+
+# --- Protocole app ↔ cœur : memory_list / memory_forget ---
+from friday.voice import CoreServer, parse_app_message  # noqa: E402
+
+
+def test_protocole_memoire(tmp_path, audit):
+    assert parse_app_message('{"type":"memory_list"}') == {"type": "memory_list"}
+    assert parse_app_message('{"type":"memory_forget","id":3}')["id"] == 3
+    assert parse_app_message('{"type":"memory_forget"}') is None
+    assert parse_app_message('{"type":"memory_forget","id":true}') is None
+
+    remote = EchoBrain()
+    store = MemoryStore(tmp_path / "m.db", audit)
+    a = store.remember("L'utilisateur aime le jazz")
+    store.remember("La sœur de l'utilisateur s'appelle Awa")
+    server = CoreServer(Conductor(), HybridBrain(LocalBrain(), remote, store))
+    listed = _asyncio.run(server.handle({"type": "memory_list"}))
+    assert listed["available"] and [f["text"] for f in listed["facts"]] == [
+        "La sœur de l'utilisateur s'appelle Awa", "L'utilisateur aime le jazz"]
+    assert set(listed["facts"][0]) == {"id", "text", "category", "created_at"}
+    out = _asyncio.run(server.handle({"type": "memory_forget", "id": a.id}))
+    assert out["forgot"] and [f["text"] for f in out["facts"]] == ["La sœur de l'utilisateur s'appelle Awa"]
+    assert remote.resets == 1                     # la conversation de Claude est effacée aussi
+    assert not _asyncio.run(server.handle({"type": "memory_forget", "id": 999}))["forgot"]
+    assert remote.resets == 1
+    no_mem = CoreServer(Conductor(), LocalBrain())
+    assert _asyncio.run(no_mem.handle({"type": "memory_list"})) == {"type": "memory", "facts": [], "available": False}
+
+
+def test_claude_sait_qu_il_a_une_memoire(tmp_path, audit):
+    from friday.claude_brain import PersistentClaudeBrain, system_prompt
+    assert "[mémoire]" not in system_prompt({}, None)
+    remote = PersistentClaudeBrain(tmp_path / "claude", {}, tmp_path)
+    HybridBrain(LocalBrain(), remote, MemoryStore(tmp_path / "m.db", audit))
+    prompt = remote.persistent_command()
+    assert "[mémoire]" in prompt[prompt.index("--system-prompt") + 1]
+
+
+def test_redact_secrets():
+    from friday.memory.secrets import redact_secrets
+    assert redact_secrets("J'aime le jazz.") == "J'aime le jazz."
+    assert redact_secrets("Ma sœur s'appelle Awa et mon mot de passe est soleil42.") == "Ma sœur s'appelle Awa"
+    assert redact_secrets("Mon code PIN est 1234") == ""
+
+
+def test_soeur_retrouvee_malgre_la_ligature(mem):
+    mem.remember("L'utilisateur a une sœur prénommée Awa.", category="proches")
+    assert [f.text for f in mem.recall("Comment s'appelle ma sœur ?")] == ["L'utilisateur a une sœur prénommée Awa."]
+    assert mem.recall("ma soeur") and mem.forget("oublie ma sœur") == 1

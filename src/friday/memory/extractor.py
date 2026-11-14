@@ -1,7 +1,7 @@
 """Extraction de faits depuis un énoncé de l'utilisateur.
 
 `FactExtractor` est l'interface ; `RuleBasedExtractor` est la version simple à
-règles (tests, hors ligne). La version Claude viendra au branchement.
+règles (tests, hors ligne, repli). La version Claude est `claude_extractor.ClaudeFactExtractor`.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ class FactExtractor(Protocol):
 
 def slug(text: str) -> str:
     """Clé stable : minuscules, sans accents, mots séparés par « _ »."""
-    norm = unicodedata.normalize("NFKD", text.lower())
+    norm = unicodedata.normalize("NFKD", text.lower().replace("œ", "oe").replace("æ", "ae"))
     norm = "".join(c for c in norm if not unicodedata.combining(c))
     return "_".join(re.findall(r"[a-z0-9]+", norm))
 

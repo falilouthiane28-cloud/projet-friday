@@ -49,6 +49,8 @@ final class AppModel {
     private(set) var brainName: String?
     private(set) var claudeBinary: String?
     private(set) var needsLogin = false
+    private(set) var memory = MemoryBook()            // « Ce dont Friday se souvient… »
+    var showingMemory = false
     /// Une réponse est attendue (saisie texte ou énoncé vocal).
     var isThinking: Bool { !pendingText.subtracting(streaming.keys).isEmpty || voiceState == .processing }
     /// Lire aussi les réponses aux messages tapés (par défaut : seulement en mode vocal).
@@ -229,6 +231,9 @@ final class AppModel {
             updateConfirm(id) { $0.expire() }
         case .notice(let text):
             messages.append(ChatMessage(fromFriday: true, text: text, isNotice: true))
+        case .memory(let facts, let available, let forgot):
+            memory.apply(facts: facts, available: available, forgot: forgot)
+            log("mémoire : \(facts.count) fait(s)\(forgot == true ? ", un fait oublié" : "")")
         case .error(let message):
             pendingText.removeAll()
             note("Le cœur a signalé une erreur : \(message)")
@@ -285,6 +290,22 @@ final class AppModel {
             toggleListening()
         }
     }
+
+    /// « Ce dont Friday se souvient… » : ouvre la fenêtre sur le panneau mémoire et redemande la liste.
+    func showMemory() {
+        OverlayController.shared.show(model: self)
+        OverlayController.shared.setExpanded(true)
+        showingMemory = true
+        let request = memory.open()
+        if let core { core.send(request) } else { memory.apply(facts: [], available: false, forgot: nil) }
+    }
+
+    /// Oubli d'un fait : 1er appui = confirmation demandée, 2e appui = envoyé au cœur.
+    func forgetFact(_ id: Int) {
+        if let request = memory.tapForget(id) { core?.send(request) }
+    }
+
+    func cancelForget() { memory.cancel() }
 
     /// Nouvelle conversation : vide le fil et oublie la session Claude Code.
     func newConversation() {

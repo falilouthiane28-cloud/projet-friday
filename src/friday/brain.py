@@ -6,6 +6,7 @@ réponse d'attente pour le reste. Phase 3 : `ClaudeCodeBrain` (Claude Code).
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from collections.abc import AsyncIterator
 import re
@@ -71,9 +72,16 @@ class HybridBrain:
         self.local = local
         self.remote = remote
         self.memory = memory                         # MemoryStore (phase 4), facultatif
+        self._learning: set[asyncio.Task[Any]] = set()
+        if memory is not None and hasattr(remote, "memory_enabled"):
+            remote.memory_enabled = True
 
     def _remember(self, text: str) -> tuple[str | None, str]:
-        """Mémoire : « oublie … » → réponse locale ; sinon apprend l'énoncé et ajoute les faits utiles à la question."""
+        """Mémoire : « oublie … » → réponse locale ; sinon ajoute les faits utiles à la question.
+
+        Sans extracteur Claude, l'énoncé est appris tout de suite (règles) ; avec, il l'est après la
+        réponse (`_learn_later`).
+        """
         if self.memory is None:
             return None, text
         if m := _FORGET.match(text.strip()):
@@ -81,9 +89,23 @@ class HybridBrain:
             if n:                                    # la conversation de Claude contient encore le fait : on l'efface aussi
                 self.reset()
             return ("C'est oublié." if n else "Je n'avais rien retenu à ce sujet."), text
-        self.memory.learn(text)
+        if getattr(self.memory, "deep", None) is None:
+            self.memory.learn(text)
         ctx = self.memory.context_for(text)
         return None, (f"{ctx}\n\n{text}" if ctx else text)
+
+    def _learn_later(self, text: str, reply: str) -> None:
+        """Extraction des faits par Claude en tâche de fond : la réponse n'attend pas."""
+        if self.memory is None or getattr(self.memory, "deep", None) is None:
+            return
+        task = asyncio.create_task(self.memory.alearn(text, reply))
+        self._learning.add(task)
+        task.add_done_callback(self._learning.discard)
+
+    async def settle(self, timeout: float | None = None) -> None:
+        """Attend la fin des extractions en cours (arrêt, tests)."""
+        if self._learning:
+            await asyncio.wait(set(self._learning), timeout=timeout)
 
     def reset(self) -> None:
         if hasattr(self.remote, "reset"):
@@ -98,6 +120,7 @@ class HybridBrain:
             await self.remote.prewarm()
 
     async def close(self) -> None:
+        await self.settle(timeout=30)                # un fait dit juste avant l'arrêt est quand même retenu
         if hasattr(self.remote, "close"):
             await self.remote.close()
 
@@ -109,9 +132,11 @@ class HybridBrain:
             return forgot
         from .claude_brain import ClaudeError
         try:
-            return await self.remote.respond(prompt, decision, source)
+            reply = await self.remote.respond(prompt, decision, source)
         except ClaudeError as exc:
             return str(exc)
+        self._learn_later(text, reply)
+        return reply
 
     async def stream(self, text: str, decision: RoutingDecision, source: str = "text") -> AsyncIterator[str]:
         """Comme respond, mais au fil de l'eau quand le cerveau distant le permet."""
@@ -124,11 +149,16 @@ class HybridBrain:
             return
         from .claude_brain import ClaudeError
         streamer = getattr(self.remote, "stream", None)
+        parts: list[str] = []
         try:
             if streamer is None:
-                yield await self.remote.respond(prompt, decision, source)
-                return
-            async for delta in streamer(prompt, decision, source):
-                yield delta
+                parts.append(await self.remote.respond(prompt, decision, source))
+                yield parts[-1]
+            else:
+                async for delta in streamer(prompt, decision, source):
+                    parts.append(delta)
+                    yield delta
         except ClaudeError as exc:
             yield str(exc)
+            return
+        self._learn_later(text, "".join(parts))

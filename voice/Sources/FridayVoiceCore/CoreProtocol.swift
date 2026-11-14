@@ -2,15 +2,19 @@ import Foundation
 
 /// Protocole JSON Lines entre l'app Swift et le cœur Python (`python -m friday --serve`).
 ///
-/// app → cœur : ask{id, text, source}, metrics{ttfa_ms}, reset, confirm_result{id, ok}, shutdown
+/// app → cœur : ask{id, text, source}, metrics{ttfa_ms}, reset, confirm_result{id, ok}, shutdown,
+///              memory_list, memory_forget{id}
 /// cœur → app : ready{name, brain, claude_binary?}, chunk{id, text}, reply{id, text, intent, agent, login_required?},
-///              error{message}, confirm{id, summary, action}, confirm_expired{id}, notice{text}
+///              error{message}, confirm{id, summary, action}, confirm_expired{id}, notice{text},
+///              memory{facts: [{id, text, category, created_at}], available, forgot?}
 public enum CoreRequest: Equatable, Sendable {
     case ask(id: Int, text: String, source: String)     // source : "voice" | "text"
     case metrics(ttfaMs: Int)
     case reset                                          // nouvelle conversation
     case confirmResult(id: Int, ok: Bool)               // réponse à une demande Tier 1
     case shutdown
+    case memoryList                                     // « Ce dont Friday se souvient… »
+    case memoryForget(id: Int)                          // oublier un fait précis
 
     public func jsonLine() -> String {
         var obj: [String: Any]
@@ -20,6 +24,8 @@ public enum CoreRequest: Equatable, Sendable {
         case .reset: obj = ["type": "reset"]
         case .confirmResult(let id, let ok): obj = ["type": "confirm_result", "id": id, "ok": ok]
         case .shutdown: obj = ["type": "shutdown"]
+        case .memoryList: obj = ["type": "memory_list"]
+        case .memoryForget(let id): obj = ["type": "memory_forget", "id": id]
         }
         let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
@@ -34,6 +40,7 @@ public enum CoreEvent: Equatable, Sendable {
     case confirm(id: Int, summary: String, action: String)   // action Tier 1 : Autoriser / Refuser
     case confirmExpired(id: Int)                        // 60 s sans réponse : refusée par le cœur
     case notice(String)                                 // action Tier 2 exécutée
+    case memory(facts: [MemoryFact], available: Bool, forgot: Bool?)   // faits mémorisés (plus récents d'abord)
 
     public static func parse(_ line: String) -> CoreEvent? {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
@@ -59,7 +66,100 @@ public enum CoreEvent: Equatable, Sendable {
         case "notice":
             guard let text = obj["text"] as? String, !text.isEmpty else { return nil }
             return .notice(text)
+        case "memory":
+            guard let raw = obj["facts"] as? [[String: Any]] else { return nil }
+            let facts = raw.compactMap { f -> MemoryFact? in
+                guard let id = f["id"] as? Int, let text = f["text"] as? String, !text.isEmpty else { return nil }
+                return MemoryFact(id: id, text: text, category: f["category"] as? String ?? "general",
+                                  createdAt: f["created_at"] as? String ?? "")
+            }
+            return .memory(facts: facts, available: obj["available"] as? Bool ?? true, forgot: obj["forgot"] as? Bool)
         default: return nil
+        }
+    }
+}
+
+/// Un fait que Friday a retenu sur l'utilisateur.
+public struct MemoryFact: Equatable, Sendable, Identifiable {
+    public let id: Int
+    public let text: String
+    public let category: String
+    public let createdAt: String                        // ISO 8601 (UTC)
+
+    public init(id: Int, text: String, category: String = "general", createdAt: String = "") {
+        self.id = id
+        self.text = text
+        self.category = category
+        self.createdAt = createdAt
+    }
+
+    public var categoryLabel: String {
+        switch category {
+        case "identite": "Identité"
+        case "proches": "Proches"
+        case "preference": "Préférence"
+        case "habitude": "Habitude"
+        case "projet": "Projet"
+        case "travail": "Travail"
+        case "sante": "Santé"
+        default: "Divers"
+        }
+    }
+
+    /// « 14/11/2026 », ou "" si la date est illisible.
+    public var dayLabel: String {
+        let parts = createdAt.prefix(10).split(separator: "-")
+        guard parts.count == 3 else { return "" }
+        return "\(parts[2])/\(parts[1])/\(parts[0])"
+    }
+}
+
+/// « Ce dont Friday se souvient… » : liste des faits et oubli en deux temps (Oublier → Confirmer).
+public struct MemoryBook: Equatable, Sendable {
+    public enum Phase: Equatable, Sendable { case idle, loading, loaded, unavailable }
+    public private(set) var facts: [MemoryFact] = []
+    public private(set) var phase: Phase = .idle
+    public private(set) var armed: Int? = nil           // fait dont l'oubli attend la confirmation
+    public private(set) var forgetting: Int? = nil      // demande envoyée, réponse attendue
+    public private(set) var lastMessage: String? = nil
+
+    public init() {}
+
+    /// Ouverture du panneau : la liste est redemandée au cœur.
+    public mutating func open() -> CoreRequest {
+        phase = .loading
+        armed = nil
+        lastMessage = nil
+        return .memoryList
+    }
+
+    /// 1er appui : arme ; 2e appui sur le même fait : la demande d'oubli part (une seule fois).
+    public mutating func tapForget(_ id: Int) -> CoreRequest? {
+        guard forgetting == nil, facts.contains(where: { $0.id == id }) else { return nil }
+        if armed == id {
+            armed = nil
+            forgetting = id
+            return .memoryForget(id: id)
+        }
+        armed = id
+        return nil
+    }
+
+    public mutating func cancel() { armed = nil }
+
+    public mutating func apply(facts: [MemoryFact], available: Bool, forgot: Bool?) {
+        self.facts = facts
+        phase = available ? .loaded : .unavailable
+        if let forgot { lastMessage = forgot ? "C'est oublié." : "Ce fait n'existait plus." }
+        forgetting = nil
+        if let a = armed, !facts.contains(where: { $0.id == a }) { armed = nil }
+    }
+
+    public var emptyText: String {
+        switch phase {
+        case .idle, .loading: "Chargement…"
+        case .unavailable: "La mémoire n'est pas disponible (cœur en mode local)."
+        case .loaded: "Friday ne se souvient encore de rien. Dites par exemple « ma sœur s'appelle Awa »."
         }
     }
 }

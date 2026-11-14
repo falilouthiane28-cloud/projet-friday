@@ -25,6 +25,7 @@ brain:
   engine: claude-code
   claude_binary: null    # null : PATH, ~/.claude/local, puis le binaire de l'app Claude
   model: sonnet
+  memory_model: haiku    # extraction des faits durables après chaque échange (appel séparé, en tâche de fond)
   timeout_s: 60
 
 tools:

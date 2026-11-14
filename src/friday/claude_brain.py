@@ -68,7 +68,7 @@ VOICE_TAG = "[voix] "
 _DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 
 
-def system_prompt(soul: Mapping[str, Any], voice: bool | None, tools: bool = False) -> str:
+def system_prompt(soul: Mapping[str, Any], voice: bool | None, tools: bool = False, memory: bool = False) -> str:
     """voice=None : session persistante, le style est choisi par message (préfixe « [voix] »)."""
     ident = soul.get("IDENTITY", {})
     rules = soul.get("COMMUNICATION_RULES", [])
@@ -92,6 +92,11 @@ def system_prompt(soul: Mapping[str, Any], voice: bool | None, tools: bool = Fal
         ]
     else:
         lines.append("Tu n'as aucun outil pour l'instant : n'affirme jamais avoir fait une action sur la machine.")
+    if memory:
+        lines.append("Friday a une mémoire à long terme : les faits durables que l'utilisateur confie sont retenus "
+                     "automatiquement après l'échange (jamais les mots de passe ni les codes) et, quand ils sont utiles, "
+                     "ils arrivent en tête du message sous « [mémoire] ». Ne dis jamais que tu ne pourras pas t'en souvenir. "
+                     "Pour faire oublier un fait : dire « oublie … » ou passer par « Ce dont Friday se souvient… » dans la bulle.")
     if voice is None:
         lines.append(f"Si un message commence par « {VOICE_TAG.strip()} », ta réponse sera lue à voix haute : 1 à 2 phrases, "
                      "sans markdown, sans liste, sans emoji. Sinon, elle s'affiche dans une petite fenêtre de discussion : "
@@ -222,6 +227,7 @@ class ClaudeCodeBrain:
         self.stream_runner = stream_runner
         self.env = clean_env(env if env is not None else os.environ)
         self.session_id: str | None = None
+        self.memory_enabled = False                  # HybridBrain avec mémoire : Claude le sait
         self._log = get_logger("friday.claude")
 
     def reset(self) -> None:
@@ -232,7 +238,7 @@ class ClaudeCodeBrain:
         fmt = ["stream-json", "--verbose", "--include-partial-messages"] if stream else ["json"]
         cmd = [str(self.binary), "-p", text, "--output-format", *fmt, "--model", self.model,
                "--tools", "", "--strict-mcp-config", "--setting-sources", "",
-               "--system-prompt", system_prompt(self.soul, voice)]
+               "--system-prompt", system_prompt(self.soul, voice, memory=self.memory_enabled)]
         if self.session_id:
             cmd += ["--resume", self.session_id]
         return cmd
@@ -304,7 +310,8 @@ class PersistentClaudeBrain(ClaudeCodeBrain):
     def persistent_command(self) -> list[str]:
         cmd = [str(self.binary), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--include-partial-messages", "--model", self.model, "--tools", "", "--strict-mcp-config",
-               "--setting-sources", "", "--system-prompt", system_prompt(self.soul, None, tools=bool(self.mcp_config))]
+               "--setting-sources", "", "--system-prompt", system_prompt(self.soul, None, tools=bool(self.mcp_config),
+                                                                            memory=self.memory_enabled)]
         if self.mcp_config:                          # seuls les outils de Friday, aucun outil intégré
             cmd += ["--mcp-config", self.mcp_config, "--allowedTools", "mcp__friday"]
         if self.session_id:                          # reprise après un arrêt du processus

@@ -12,6 +12,7 @@ import sys
 
 from .audit import AuditLog
 from .memory import MemoryStore
+from .memory.claude_extractor import ClaudeFactExtractor
 from .brain import Brain, HybridBrain, LocalBrain
 from .claude_brain import PersistentClaudeBrain, find_claude_binary
 from .conductor import Conductor
@@ -57,7 +58,10 @@ def make_brain(cfg: FridayConfig, soul: dict, audit: AuditLog | None = None) -> 
         print("Claude Code introuvable : réponses locales seulement.", file=sys.stderr)
         return local
     workdir = cfg.audit_db_path.parent / "claude"      # sessions Claude Code de Friday, hors du dépôt
-    memory = MemoryStore(cfg.audit_db_path.parent / "memory.db", audit) if audit is not None else None
+    memory = None
+    if audit is not None:
+        extractor = ClaudeFactExtractor(binary, cfg.audit_db_path.parent / "claude-memory", cfg.memory_model)
+        memory = MemoryStore(cfg.audit_db_path.parent / "memory.db", audit, deep_extractor=extractor)
     return HybridBrain(local, PersistentClaudeBrain(binary, soul, workdir, cfg.claude_model, cfg.claude_timeout_s), memory)
 
 

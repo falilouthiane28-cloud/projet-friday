@@ -5,6 +5,8 @@
 - `forget` efface vraiment : `secure_delete` (pages remises à zéro), fusion de
   l'index FTS5 (`optimize`) et checkpoint du WAL.
 - Chaque mémorisation et chaque oubli est audité avec une empreinte seulement.
+- Aucun secret n'est mémorisé (`secrets.contains_secret`, filtre en dur à l'écriture).
+- `alearn` : extraction par Claude (`deep_extractor`) en tâche de fond, règles en repli.
 
 Chroma n'est pas utilisé : il dépend d'onnxruntime, absent sous Python 3.15.
 """
@@ -21,7 +23,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from friday.audit import AuditLog
+from collections.abc import Sequence
+from typing import Any, Protocol
+
+from friday.log import get_logger
 from friday.memory.extractor import ExtractedFact, FactExtractor, RuleBasedExtractor
+from friday.memory.secrets import contains_secret, redact_secrets
+
+
+class SecretRefused(ValueError):
+    """Le fait contient un secret : il n'est jamais mémorisé."""
+
+
+class DeepExtractor(Protocol):
+    async def aextract(self, utterance: str, reply: str = "", known: Sequence[Any] = ()) -> list[ExtractedFact]: ...
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS facts (
@@ -65,8 +80,13 @@ def _fingerprint(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def _ligatures(text: str) -> str:
+    """« sœur » → « soeur » : unicode61 ne décompose pas œ/æ, l'index et les requêtes doivent l'écrire pareil."""
+    return text.replace("œ", "oe").replace("Œ", "Oe").replace("æ", "ae").replace("Æ", "Ae")
+
+
 def _fold(text: str) -> str:
-    norm = unicodedata.normalize("NFKD", text.lower())
+    norm = unicodedata.normalize("NFKD", _ligatures(text.lower()))
     return "".join(c for c in norm if not unicodedata.combining(c))
 
 
@@ -89,16 +109,20 @@ class MemoryStore:
         db_path: str | Path,
         audit: AuditLog,
         extractor: FactExtractor | None = None,
+        deep_extractor: DeepExtractor | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.audit = audit
         self.extractor: FactExtractor = extractor or RuleBasedExtractor()
+        self.deep = deep_extractor              # Claude (haiku) ; None = règles seulement
+        self._log = get_logger("friday.memory")
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False, isolation_level=None)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA secure_delete=ON")
         self._conn.executescript(_SCHEMA)
+        self._reindex_ligatures()
 
     # ── écriture ────────────────────────────────────────────────────────────
     def remember(
@@ -118,6 +142,9 @@ class MemoryStore:
         text = " ".join(text.split())
         if not text:
             raise ValueError("fait vide")
+        if contains_secret(text):
+            self.audit.append("memory", "memory.refused", {"text_sha256": _fingerprint(text), "reason": "secret"})
+            raise SecretRefused("un secret n'est jamais mémorisé")
         confidence = max(0.0, min(1.0, confidence))
         now = datetime.now(timezone.utc).isoformat()
         with self._lock:
@@ -132,7 +159,7 @@ class MemoryStore:
                     "VALUES (?, ?, ?, ?, ?, ?)", (text, category, source, now, confidence, key))
                 fid = cur.lastrowid
                 self._conn.execute("INSERT INTO facts_fts (rowid, text, category) VALUES (?, ?, ?)",
-                                   (fid, text, category))
+                                   (fid, _ligatures(text), category))
                 self._conn.execute("COMMIT")
             except BaseException:
                 self._conn.execute("ROLLBACK")
@@ -144,8 +171,31 @@ class MemoryStore:
         return Fact(fid, text, category, source, now, confidence, key)
 
     def learn(self, utterance: str, source: str = "user") -> list[Fact]:
-        """Extrait les faits d'un énoncé et les mémorise."""
-        return [self.remember(f, source=source) for f in self.extractor.extract(utterance)]
+        """Extrait les faits d'un énoncé (règles) et les mémorise."""
+        return self._store(self.extractor.extract(utterance), source)
+
+    async def alearn(self, utterance: str, reply: str = "", source: str = "user") -> list[Fact]:
+        """Extraction par Claude après l'échange ; règles en repli (échec, pas d'extracteur, secret)."""
+        if self.deep is None:
+            return self.learn(utterance, source)
+        clean = redact_secrets(utterance)        # les passages secrets ne partent jamais à l'extracteur
+        if not clean:
+            return []
+        try:
+            facts = await self.deep.aextract(clean, "" if contains_secret(reply) else reply, self.all())
+        except Exception as exc:                 # Claude absent, lent ou illisible : on garde les règles
+            self._log.warning("memory.extract_failed", error=str(exc)[:200])
+            return self.learn(utterance, source)
+        return self._store(facts, source)
+
+    def _store(self, facts: list[ExtractedFact], source: str) -> list[Fact]:
+        stored: list[Fact] = []
+        for f in facts:
+            try:
+                stored.append(self.remember(f, source=source))
+            except ValueError:                   # vide ou secret : ignoré
+                continue
+        return stored
 
     def forget(self, query: str) -> int:
         """Droit à l'oubli : efface les faits contenant tous les mots utiles de la requête."""
@@ -212,6 +262,18 @@ class MemoryStore:
         self._conn.close()
 
     # ── interne ─────────────────────────────────────────────────────────────
+    def _reindex_ligatures(self) -> None:
+        """Bases créées avant la gestion de œ/æ : index FTS réécrit pour ces faits."""
+        rows = self._conn.execute(
+            "SELECT f.id, f.text, f.category FROM facts f JOIN facts_fts ON facts_fts.rowid = f.id "
+            "WHERE facts_fts.text != f.text OR f.text GLOB '*[œæŒÆ]*'").fetchall()
+        for fid, text, category in rows:
+            if _ligatures(text) == text:
+                continue
+            self._conn.execute("DELETE FROM facts_fts WHERE rowid = ?", (fid,))
+            self._conn.execute("INSERT INTO facts_fts (rowid, text, category) VALUES (?, ?, ?)",
+                               (fid, _ligatures(text), category))
+
     def _delete_ids(self, ids: list[int]) -> None:
         for fid in ids:
             self._conn.execute("DELETE FROM facts WHERE id = ?", (fid,))
