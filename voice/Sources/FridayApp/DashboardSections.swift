@@ -168,8 +168,9 @@ struct MemorySection: View {
     var scrolls = true
 
     var body: some View {
-        SectionPage(title: "Mémoire", subtitle: subtitle, scrolls: false) {
-            MemoryPanel(model: model, scrolls: scrolls, embedded: true)
+        // Une seule zone de défilement (la page) : un ScrollView imbriqué dans le détail du NavigationSplitView restait vide.
+        SectionPage(title: "Mémoire", subtitle: subtitle, scrolls: scrolls) {
+            MemoryPanel(model: model, scrolls: false, embedded: true)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

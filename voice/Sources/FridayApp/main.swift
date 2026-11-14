@@ -138,6 +138,40 @@ func snapshot(to dir: String) {
     detail(AnyView(HomeAutomationSection(model: model, scrolls: false)), "dash-domotique.png")
     detail(AnyView(SystemSection(model: model, scrolls: false)), "dash-systeme.png")
     render(StatsView(stats: model.stats).padding(16).frame(width: 220).background(Theme.surface1), "dash-sidebar-stats.png")
+
+    // Rendu AppKit réel (NSHostingView dans une fenêtre hors écran) : ScrollView et List y sont dessinés.
+    func renderLive(_ view: some View, _ size: NSSize, _ name: String, after: () -> Void = {}) {
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).environment(\.colorScheme, .dark))
+        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -10_000, y: -10_000), size: size),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderFrontRegardless()
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        after()                                       // ex. réponse du cœur simulée après onAppear
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { print("échec : \(name)"); return }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url.appendingPathComponent(name))
+        window.orderOut(nil)
+        print("écrit : \(name)")
+    }
+    let live = NSSize(width: 1200, height: 860)
+    renderLive(MemorySection(model: model).background(Theme.surface0), live, "live-memoire.png") {
+        model.handle(.memory(facts: [
+            MemoryFact(id: 4, text: "L'utilisateur s'appelle Thaïne", category: "identite", createdAt: "2026-11-14T21:00:00+00:00"),
+        ], available: true, forgot: nil))
+    }
+    renderLive(ConversationsSection(model: model).background(Theme.surface0), live, "live-conversations.png")
+    for section in [DashSection.memoire, .agents, .systeme] {
+        model.dashboardSection = section
+        renderLive(DashboardView(model: model), NSSize(width: 1280, height: 800), "live-dashboard-\(section.rawValue).png") {
+            if section == .memoire {
+                model.handle(.memory(facts: [MemoryFact(id: 4, text: "L'utilisateur s'appelle Thaïne", category: "identite",
+                                                        createdAt: "2026-11-14T21:00:00+00:00")], available: true, forgot: nil))
+            }
+        }
+    }
 }
 
 let args = CommandLine.arguments

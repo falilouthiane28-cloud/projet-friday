@@ -3,6 +3,7 @@
 > Entrée datée à chaque grosse modification. Dernière entrée en haut.
 
 ## En cours
+- 2026-11-14 : correction de l'onglet Mémoire, qui restait vide à cause d'un ScrollView imbriqué ; la barre latérale est maintenant visible par défaut. Vérifié par `--selfshot` pour Mémoire, Agents et Conversations. Non commité.
 - 2026-11-14 : **UX premium du dashboard**, codée et vérifiée, **non commitée** (en attente de l'accord). Fait :
   - la bulle se masque quand le dashboard est au premier plan et revient quand Finder passe devant (vérifié en réel par la liste des fenêtres) ;
   - 6 sections fonctionnelles (Accueil, Conversations, Agents, Mémoire, Domotique, Système), raccourcis ⌘1 à ⌘6 ;

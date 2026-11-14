@@ -67,7 +67,28 @@ struct MenuBarLabel: View {
                 if let i = args.firstIndex(of: "--dashboard") {
                     let section = i + 1 < args.count ? DashSection(rawValue: args[i + 1]) : nil
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { model.openDashboard(section ?? .accueil) }
+                    // `--selfshot <fichier.png>` : l'app capture sa propre fenêtre (aucune autorisation requise).
+                    if let j = args.firstIndex(of: "--selfshot"), j + 1 < args.count {
+                        let path = args[j + 1]
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { selfShot(to: path) }
+                    }
                 }
             }
     }
+}
+
+/// Capture de la fenêtre du dashboard par l'app elle-même (vérification visuelle sans Enregistrement de l'écran).
+@MainActor func selfShot(to path: String) {
+    // CGWindowListCreateImage est retiré du SDK macOS 15+, mais reste exporté : appel dynamique (diagnostic seulement).
+    typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+    guard let w = OverlayController.dashboardWindow(),
+          let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage"),
+          let img = unsafeBitCast(sym, to: Capture.self)(.null, CGWindowListOption.optionIncludingWindow.rawValue,
+                                                         CGWindowID(w.windowNumber), CGWindowImageOption.boundsIgnoreFraming.rawValue)?
+              .takeRetainedValue() else {
+        AppModel.shared.log("selfshot : échec"); return
+    }
+    let rep = NSBitmapImageRep(cgImage: img)
+    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+    AppModel.shared.log("selfshot : \(path)")
 }

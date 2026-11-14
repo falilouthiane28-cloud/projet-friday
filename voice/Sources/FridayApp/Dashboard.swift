@@ -37,9 +37,10 @@ enum DashSection: String, CaseIterable, Identifiable, Hashable {
 /// Quand cette fenêtre est au premier plan, la bulle flottante se retire (`OverlayController.updateVisibility`).
 struct DashboardView: View {
     @Bindable var model: AppModel
+    @State private var columns: NavigationSplitViewVisibility = .all     // HIG : barre latérale visible par défaut
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             List(selection: Binding<DashSection?>(get: { model.dashboardSection },
                                                   set: { if let s = $0 { model.dashboardSection = s } })) {
                 ForEach(DashSection.allCases) { s in
