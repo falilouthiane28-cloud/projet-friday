@@ -8,7 +8,7 @@ import Observation
 struct ChatMessage: Identifiable, Equatable {
     let id = UUID()
     let fromFriday: Bool
-    let text: String
+    var text: String
     let date = Date()
 }
 
@@ -48,7 +48,7 @@ final class AppModel {
     private(set) var claudeBinary: String?
     private(set) var needsLogin = false
     /// Une réponse est attendue (saisie texte ou énoncé vocal).
-    var isThinking: Bool { !pendingText.isEmpty || voiceState == .processing }
+    var isThinking: Bool { !pendingText.subtracting(streaming.keys).isEmpty || voiceState == .processing }
     /// Lire aussi les réponses aux messages tapés (par défaut : seulement en mode vocal).
     var speakAllReplies = UserDefaults.standard.bool(forKey: "speakAllReplies") {
         didSet { UserDefaults.standard.set(speakAllReplies, forKey: "speakAllReplies") }
@@ -65,6 +65,19 @@ final class AppModel {
     private var core: CoreClient?
     private var voice: VoicePipeline?
     private var pendingText: Set<Int> = []        // questions tapées en attente de réponse
+    private var streaming: [Int: UUID] = [:]      // réponse en flux → message du fil en cours de remplissage
+
+    /// Les phrases d'une réponse doivent atteindre la voix dans l'ordre : chaque envoi attend le précédent.
+    private var lastVoiceTask: Task<Void, Never>?
+    private func inOrder(_ op: @escaping @Sendable () async -> Void) {
+        let previous = lastVoiceTask
+        lastVoiceTask = Task { await previous?.value; await op() }
+    }
+
+    /// Friday lit-elle la réponse à cette question ? (vocale, ou option « tout lire »)
+    private func speaks(_ id: Int) -> Bool {
+        VoiceLink.shouldSpeak(askedByVoice: !pendingText.contains(id), speakAll: speakAllReplies, voiceAvailable: voice != nil)
+    }
 
     init() {
         timer = Timer.scheduledTimer(withTimeInterval: 1 / 20, repeats: true) { [weak self] _ in
@@ -172,14 +185,28 @@ final class AppModel {
             brainName = brain
             claudeBinary = binary
             log("cœur prêt (\(name), cerveau : \(brain))")
-        case .reply(let id, let text, _, _, let loginRequired):
-            let typed = pendingText.remove(id) != nil
-            needsLogin = loginRequired
-            messages.append(ChatMessage(fromFriday: true, text: text))
-            // Parole seulement pour une question posée à la voix (ou si l'option « tout lire » est active).
-            if let voice, VoiceLink.shouldSpeak(askedByVoice: !typed, speakAll: speakAllReplies, voiceAvailable: true) {
-                Task { await voice.controller.say(text) }
+        case .chunk(let id, let text):
+            // Réponse en flux : le fil se remplit phrase par phrase, la voix lit dès la première.
+            if let mid = streaming[id], let i = messages.firstIndex(where: { $0.id == mid }) {
+                messages[i].text += " " + text
             } else {
+                let m = ChatMessage(fromFriday: true, text: text)
+                streaming[id] = m.id
+                messages.append(m)
+            }
+            if let voice, speaks(id) { inOrder { await voice.controller.sayMore(text) } }
+        case .reply(let id, let text, _, _, let loginRequired, let streamed):
+            let spoken = speaks(id)
+            pendingText.remove(id)
+            needsLogin = loginRequired
+            if let mid = streaming.removeValue(forKey: id), let i = messages.firstIndex(where: { $0.id == mid }) {
+                messages[i].text = text                      // texte final exact (markdown compris)
+            } else {
+                messages.append(ChatMessage(fromFriday: true, text: text))
+            }
+            if let voice, spoken, !streamed {
+                inOrder { await voice.controller.say(text) }
+            } else if voice == nil || !spoken {
                 show(loginRequired ? .confused : .happy)
             }
         case .error(let message):
@@ -226,6 +253,7 @@ final class AppModel {
     func newConversation() {
         messages = [ChatMessage(fromFriday: true, text: "Nouvelle conversation. Je vous écoute.")]
         pendingText.removeAll()
+        streaming.removeAll()
         core?.send(.reset)
         if let voice { Task { await voice.controller.stop() } }
         show(.neutral)

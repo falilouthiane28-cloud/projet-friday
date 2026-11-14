@@ -7,6 +7,7 @@ réponse d'attente pour le reste. Phase 3 : `ClaudeCodeBrain` (Claude Code).
 from __future__ import annotations
 
 from datetime import datetime
+from collections.abc import AsyncIterator
 from typing import Callable, Protocol
 
 from .conductor import Intent, RoutingDecision, normalize
@@ -77,3 +78,19 @@ class HybridBrain:
             return await self.remote.respond(text, decision, source)
         except ClaudeError as exc:
             return str(exc)
+
+    async def stream(self, text: str, decision: RoutingDecision, source: str = "text") -> AsyncIterator[str]:
+        """Comme respond, mais au fil de l'eau quand le cerveau distant le permet."""
+        if (reply := self.local.quick(text)) is not None:
+            yield reply
+            return
+        from .claude_brain import ClaudeError
+        streamer = getattr(self.remote, "stream", None)
+        try:
+            if streamer is None:
+                yield await self.remote.respond(text, decision, source)
+                return
+            async for delta in streamer(text, decision, source):
+                yield delta
+        except ClaudeError as exc:
+            yield str(exc)

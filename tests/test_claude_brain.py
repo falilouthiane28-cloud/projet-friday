@@ -100,3 +100,72 @@ def test_find_claude_binary(tmp_path, monkeypatch):
 def test_system_prompt():
     p = system_prompt(SOUL, voice=False)
     assert "FRIDAY" in p and "Thaïne" in p and "aucun outil" in p
+
+
+# --- Streaming ---
+from friday.claude_brain import SentenceSplitter, parse_stream_line  # noqa: E402
+
+
+def delta_line(t):
+    return json.dumps({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": t}}})
+
+
+def result_line(text, session="s1", error=False):
+    return json.dumps({"type": "result", "is_error": error, "result": text, "session_id": session})
+
+
+class FakeStream:
+    def __init__(self, *runs):
+        self.runs = list(runs)
+        self.calls = []
+
+    def __call__(self, cmd, env, cwd, timeout):
+        self.calls.append(list(cmd))
+        lines = self.runs.pop(0)
+
+        async def gen():
+            for line in lines:
+                yield line
+        return gen()
+
+
+def test_decoupage_en_phrases():
+    s = SentenceSplitter()
+    assert s.feed("Bonjour ") == []
+    assert s.feed("! Com") == ["Bonjour !"]
+    assert s.feed("ment allez-vous ? Il est 10 h") == ["Comment allez-vous ?"]
+    assert s.feed(".5 et") == []                                  # pas de coupure dans « 10 h.5 »
+    assert s.feed(" voilà.\nSuite") == ["Il est 10 h.5 et voilà."]
+    assert s.flush() == ["Suite"] and s.flush() == []
+
+
+def test_parse_stream_line():
+    assert parse_stream_line(delta_line("ab")) == ("delta", "ab")
+    assert parse_stream_line(result_line("x"))[0] == "result"
+    assert parse_stream_line('{"type":"system"}') is None and parse_stream_line("pas json") is None
+
+
+def test_stream_claude_et_session(tmp_path):
+    fake = FakeStream([delta_line("Bon"), delta_line("jour."), result_line("Bonjour.", "abc")],
+                      [delta_line("Re."), result_line("Re.", "abc")])
+    b = ClaudeCodeBrain(Path("/bin/claude"), SOUL, tmp_path, stream_runner=fake, env={})
+
+    async def collect(text):
+        return [d async for d in b.stream(text, decision(), "voice")]
+
+    assert asyncio.run(collect("salut")) == ["Bon", "jour."]
+    assert b.session_id == "abc"
+    assert asyncio.run(collect("encore")) == ["Re."]
+    first, second = fake.calls
+    assert first[first.index("--output-format") + 1] == "stream-json" and "--include-partial-messages" in first
+    assert second[second.index("--resume") + 1] == "abc"
+
+
+def test_stream_connexion_requise(tmp_path):
+    fake = FakeStream([result_line("Not logged in · Please run /login", error=True)])
+    h = HybridBrain(LocalBrain(), ClaudeCodeBrain(Path("/bin/claude"), SOUL, tmp_path, stream_runner=fake, env={}))
+
+    async def collect():
+        return [d async for d in h.stream("raconte", decision(), "text")]
+
+    assert asyncio.run(collect()) == [LOGIN_HELP]

@@ -2,7 +2,8 @@
 
 Protocole JSON Lines (stdin → stdout ; journaux sur stderr) :
 - app → cœur : ask{id, text, source}, metrics{ttfa_ms}, reset, shutdown
-- cœur → app : ready{name, brain}, reply{id, text, intent, agent}, error{message}
+- cœur → app : ready{name, brain}, chunk{id, text} (une phrase, réponse en cours),
+  reply{id, text, intent, agent, streamed?, login_required?}, error{message}
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import IO, Any
 
 from ..audit import AuditLog
 from ..brain import Brain
-from ..claude_brain import LOGIN_HELP
+from ..claude_brain import LOGIN_HELP, SentenceSplitter
 from ..conductor import Conductor
 from ..log import get_logger
 
@@ -115,11 +116,34 @@ class CoreServer:
                 emit(out)
 
     async def _answer(self, msg: dict[str, Any], emit: Callable[[dict[str, Any]], None]) -> None:
+        streamer = getattr(self.brain, "stream", None)
         try:
-            out = await self.handle(msg)
+            if streamer is not None:
+                out = await self._stream_answer(msg, streamer, emit)
+            else:
+                out = await self.handle(msg)
         except Exception as exc:              # une erreur du cerveau ne doit pas tuer le cœur
             self._log.exception("serve.handle_failed")
             emit({"type": "error", "message": str(exc), "id": msg.get("id")})
             return
         if out is not None:
             emit(out)
+
+    async def _stream_answer(self, msg: dict[str, Any], streamer: Any, emit: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
+        """Émet chaque phrase dès qu'elle est complète (chunk), puis la réponse entière (reply)."""
+        text = msg["text"].strip()
+        source = msg.get("source", "text")
+        decision = self.conductor.handle(text, source=source)
+        splitter = SentenceSplitter()
+        full = ""
+        async for delta in streamer(text, decision, source):
+            full += delta
+            for sentence in splitter.feed(delta):
+                emit({"type": "chunk", "id": msg["id"], "text": sentence})
+        for sentence in splitter.flush():
+            emit({"type": "chunk", "id": msg["id"], "text": sentence})
+        out = {"type": "reply", "id": msg["id"], "text": full.strip(), "intent": decision.intent.value,
+               "agent": decision.agent, "streamed": True}
+        if full.strip() == LOGIN_HELP:
+            out["login_required"] = True
+        return out

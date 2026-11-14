@@ -32,6 +32,7 @@ public actor VoiceController {
 
     public func tick() { apply(session.onTick(now: now)) }
     public func say(_ text: String) { apply(session.onSay(text, now: now)) }
+    public func sayMore(_ text: String) { apply(session.onSayMore(text, now: now)) }
     public func listen() { apply(session.onListen(now: now)) }
     public func stop() { apply(session.onStop(now: now)) }
     public func speechFinished() { apply(session.onSpeechFinished(now: now)) }
@@ -48,6 +49,7 @@ public actor VoiceController {
             case .state(let s): emit(OutMessage(type: "state", state: s.rawValue))
             case .utterance(let t): utteranceAt = Date(); emit(OutMessage(type: "utterance", text: t))
             case .speak(let t): speaker.speak(t)
+            case .enqueueSpeech(let t): speaker.enqueue(t)
             case .stopSpeaking: speaker.stop()
             case .bargeIn: emit(OutMessage(type: "barge_in"))
             case .resetTranscript: finalized = ""; volatile = ""; cutoff = lastAudioEnd

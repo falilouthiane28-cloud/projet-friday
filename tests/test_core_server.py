@@ -94,3 +94,26 @@ def test_questions_en_parallele_et_reset(audit):
     assert out[0]["brain"] == "lent"
     assert [(m["id"], m["text"]) for m in out[1:]] == [(2, "voice:vite"), (1, "text:lent")]
     assert brain.resets == 1
+
+
+class StreamBrain:
+    name = "flux"
+
+    async def respond(self, text, decision, source="text"):
+        return "inutilisé"
+
+    async def stream(self, text, decision, source="text"):
+        for d in ["Première phrase. Deu", "xième phrase ! Fin"]:
+            yield d
+
+
+def test_reponse_en_flux_par_phrases(audit):
+    server = CoreServer(Conductor(audit=audit), StreamBrain(), audit)
+    stdin = io.StringIO('{"type":"ask","id":5,"text":"raconte","source":"voice"}\n')
+    stdout = io.StringIO()
+    assert asyncio.run(server.run(stdin, stdout)) == 0
+    out = [json.loads(line) for line in stdout.getvalue().splitlines()][1:]
+    assert [(m["type"], m.get("text")) for m in out[:3]] == [
+        ("chunk", "Première phrase."), ("chunk", "Deuxième phrase !"), ("chunk", "Fin")]
+    assert out[3]["type"] == "reply" and out[3]["streamed"] is True
+    assert out[3]["text"] == "Première phrase. Deuxième phrase ! Fin"

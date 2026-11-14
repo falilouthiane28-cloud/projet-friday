@@ -14,7 +14,7 @@ import json
 import os
 import re
 import shutil
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +113,70 @@ def parse_result(code: int, out: str) -> tuple[str, str | None]:
     return result, data.get("session_id")
 
 
+_SENTENCE_END = re.compile(r"([.!?…]+[»\"')\]]*)(\s+)|(\n+)")
+
+
+class SentenceSplitter:
+    """Découpe un flux de texte en phrases complètes (pour parler dès la première)."""
+
+    def __init__(self) -> None:
+        self.buffer = ""
+
+    def feed(self, delta: str) -> list[str]:
+        self.buffer += delta
+        out: list[str] = []
+        while m := _SENTENCE_END.search(self.buffer):
+            sentence, self.buffer = self.buffer[: m.end()].strip(), self.buffer[m.end():]
+            if sentence:
+                out.append(sentence)
+        return out
+
+    def flush(self) -> list[str]:
+        rest, self.buffer = self.buffer.strip(), ""
+        return [rest] if rest else []
+
+
+def parse_stream_line(line: str) -> tuple[str, Any] | None:
+    """Ligne `--output-format stream-json` → ("delta", texte) ou ("result", dict) ; None sinon."""
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("type") == "stream_event":
+        delta = (data.get("event") or {}).get("delta") or {}
+        if delta.get("type") == "text_delta" and delta.get("text"):
+            return "delta", delta["text"]
+        return None
+    if data.get("type") == "result":
+        return "result", data
+    return None
+
+
+# Exécute une commande en flux : produit les lignes de stdout.
+StreamRunner = Callable[[Sequence[str], Mapping[str, str], Path, float], AsyncIterator[str]]
+
+
+async def stream_process(cmd: Sequence[str], env: Mapping[str, str], cwd: Path, timeout: float) -> AsyncIterator[str]:
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, env=dict(env), cwd=cwd, stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, limit=1 << 22,
+    )
+    assert proc.stdout
+    try:
+        async with asyncio.timeout(timeout):
+            async for raw in proc.stdout:
+                yield raw.decode(errors="replace")
+            await proc.wait()
+    except TimeoutError:
+        raise ClaudeError(f"Claude n'a pas répondu en {int(timeout)} secondes.") from None
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            await proc.wait()
+
+
 class ClaudeCodeBrain:
     def __init__(
         self,
@@ -123,6 +187,7 @@ class ClaudeCodeBrain:
         timeout: float = 60,
         runner: Runner = run_process,
         env: Mapping[str, str] | None = None,
+        stream_runner: StreamRunner = stream_process,
     ) -> None:
         self.binary = binary
         self.soul = soul
@@ -130,6 +195,7 @@ class ClaudeCodeBrain:
         self.model = model
         self.timeout = timeout
         self.runner = runner
+        self.stream_runner = stream_runner
         self.env = clean_env(env if env is not None else os.environ)
         self.session_id: str | None = None
         self._log = get_logger("friday.claude")
@@ -138,8 +204,9 @@ class ClaudeCodeBrain:
         """Nouvelle conversation."""
         self.session_id = None
 
-    def command(self, text: str, voice: bool) -> list[str]:
-        cmd = [str(self.binary), "-p", text, "--output-format", "json", "--model", self.model,
+    def command(self, text: str, voice: bool, stream: bool = False) -> list[str]:
+        fmt = ["stream-json", "--verbose", "--include-partial-messages"] if stream else ["json"]
+        cmd = [str(self.binary), "-p", text, "--output-format", *fmt, "--model", self.model,
                "--tools", "", "--strict-mcp-config", "--setting-sources", "",
                "--system-prompt", system_prompt(self.soul, voice)]
         if self.session_id:
@@ -161,3 +228,34 @@ class ClaudeCodeBrain:
                 raise
         self.session_id = session or self.session_id
         return reply
+
+    async def stream(self, text: str, decision: RoutingDecision, source: str = "text") -> AsyncIterator[str]:
+        """Produit le texte de la réponse au fil de l'eau (morceaux bruts de Claude)."""
+        self.workdir.mkdir(parents=True, exist_ok=True)
+        for attempt in (0, 1):
+            got_text = False
+            result: dict[str, Any] | None = None
+            async for line in self.stream_runner(self.command(text, source == "voice", stream=True),
+                                                 self.env, self.workdir, self.timeout):
+                parsed = parse_stream_line(line)
+                if parsed is None:
+                    continue
+                kind, value = parsed
+                if kind == "delta":
+                    got_text = True
+                    yield value
+                else:
+                    result = value
+            try:
+                if result is None:
+                    raise ClaudeError("Claude Code s'est arrêté sans réponse.")
+                _, session = parse_result(1 if result.get("is_error") else 0, json.dumps(result))
+                self.session_id = session or self.session_id
+                return
+            except ClaudeError as exc:
+                # Session perdue avant tout texte : on réessaie une fois avec une conversation neuve.
+                if attempt == 0 and not got_text and self.session_id and str(exc) != LOGIN_HELP:
+                    self._log.warning("claude.resume_failed")
+                    self.session_id = None
+                    continue
+                raise

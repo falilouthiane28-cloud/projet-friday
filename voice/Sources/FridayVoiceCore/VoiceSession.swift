@@ -9,6 +9,7 @@ public enum VoiceEffect: Equatable, Sendable {
     case state(VoiceState)
     case utterance(String)
     case speak(String)
+    case enqueueSpeech(String)                  // phrase suivante, lue après celle en cours
     case stopSpeaking
     case bargeIn
     case resetTranscript
@@ -96,6 +97,13 @@ public struct VoiceSession: Sendable {
         speakingText = text
         let stop: [VoiceEffect] = state == .speaking ? [.stopSpeaking] : []
         return stop + [enter(.speaking, at: now), .speak(text)] + reset()
+    }
+
+    /// Phrase suivante d'une réponse en flux : à la suite si Friday parle déjà, sinon comme onSay.
+    public mutating func onSayMore(_ text: String, now: TimeInterval) -> [VoiceEffect] {
+        guard state == .speaking else { return onSay(text, now: now) }
+        speakingText += " " + text
+        return [.enqueueSpeech(text)]
     }
 
     public mutating func onSpeechFinished(now: TimeInterval) -> [VoiceEffect] {

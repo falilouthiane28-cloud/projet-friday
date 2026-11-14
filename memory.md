@@ -39,4 +39,6 @@
 - Friday ne parle que si la question est vocale (`VoiceLink.shouldSpeak`) ; timeout de traitement vocal porté à 60 s pour Claude.
 - Une vue hébergée dans un NSPanel n'est pas dans une scène SwiftUI : `openWindow`/`openSettings` sont capturés depuis le label du MenuBarExtra (`MenuBarLabel`).
 - Micro avec voice processing = **3 canaux** non entrelacés à 48 kHz ; ne jamais convertir directement vers mono (silence) : prendre le canal 0 (`MicConverter`). `say` ne peut pas tester le micro (l'annulation d'écho retire le son du Mac).
+- Claude Code en flux : `-p … --output-format stream-json --verbose --include-partial-messages` ; les deltas sont dans `stream_event.event.delta.text_delta`, la fin dans `type: result`. Latence mesurée : 1re phrase ~4 s, dont ~2,5 s de démarrage du binaire.
+- Protocole app ↔ cœur : `chunk{id,text}` (phrase) puis `reply{…, streamed: true}` ; l'app enchaîne les envois à la voix (`inOrder`) pour garder l'ordre.
 - Conductor : interface `IntentClassifier` prévue pour brancher semantic-router puis Haiku en phase 3.

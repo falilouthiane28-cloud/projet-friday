@@ -25,7 +25,8 @@ public enum CoreRequest: Equatable, Sendable {
 
 public enum CoreEvent: Equatable, Sendable {
     case ready(name: String, brain: String, claudeBinary: String?)
-    case reply(id: Int, text: String, intent: String, agent: String, loginRequired: Bool)
+    case chunk(id: Int, text: String)                   // une phrase de la réponse en cours
+    case reply(id: Int, text: String, intent: String, agent: String, loginRequired: Bool, streamed: Bool)
     case error(String)
 
     public static func parse(_ line: String) -> CoreEvent? {
@@ -38,7 +39,10 @@ public enum CoreEvent: Equatable, Sendable {
         case "reply":
             guard let id = obj["id"] as? Int, let text = obj["text"] as? String else { return nil }
             return .reply(id: id, text: text, intent: obj["intent"] as? String ?? "", agent: obj["agent"] as? String ?? "",
-                          loginRequired: obj["login_required"] as? Bool ?? false)
+                          loginRequired: obj["login_required"] as? Bool ?? false, streamed: obj["streamed"] as? Bool ?? false)
+        case "chunk":
+            guard let id = obj["id"] as? Int, let text = obj["text"] as? String else { return nil }
+            return .chunk(id: id, text: text)
         case "error": return .error(obj["message"] as? String ?? "erreur inconnue")
         default: return nil
         }
