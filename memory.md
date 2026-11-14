@@ -53,3 +53,6 @@
 - Secrets : refusés à l'écriture (`SecretRefused`, audit `memory.refused` avec empreinte) quelle que soit la source ; un passage secret n'est jamais envoyé à l'extracteur (`redact_secrets`).
 - FTS5 `unicode61` ne décompose pas « œ »/« æ » : l'index et les requêtes passent par `_ligatures` (réindexation auto à l'ouverture).
 - `ImageRenderer` (`--snapshot`) ne rend pas le contenu des `ScrollView` : `MemoryPanel(scrolls: false)` pour le rendu.
+- 2026-11-14 : agents = **sous-processus `claude -p` one-shot** lancés par les outils `delegate_*` (handoffs-as-tools) ; le Conductor (Claude persistant) n'a plus que `weather_read` + `delegate_*`. Restriction des outils appliquée par la passerelle (registre, `allowed`), pas seulement par `--allowedTools`. Pas de Google Calendar (OAuth) : Planificateur = Rappels macOS.
+- Bac à sable du Codeur : `sandbox-exec` avec `(allow default)` puis `deny network*`, `deny file-read*` du HOME, `deny file-write*` sauf le dossier temporaire (la dernière règle qui correspond l'emporte). L'interpréteur est le Python du framework (hors HOME), lancé en `-I`.
+- Une délégation coûte ~5 à 15 s (démarrage de `claude -p` + outils) : la spec « Ligue 1 + rappel » prend ~34 s (Chercheur puis Planificateur, en série car le rappel dépend de la date trouvée).

@@ -82,7 +82,11 @@ def system_prompt(soul: Mapping[str, Any], voice: bool | None, tools: bool = Fal
     ]
     if tools:
         lines += [
-            "Tu as des outils (rappels macOS, météo, recherche web, lecture de page web), tous contrôlés par les règles de sécurité de "
+            "Tu es le Conductor de Friday : tu ne fais pas le travail toi-même, tu le confies à tes agents par les "
+            "outils delegate_* (Chercheur : web ; Planificateur : rappels ; Codeur : Python en bac à sable), avec une "
+            "consigne complète (ils ne voient pas la conversation). Lance en parallèle les délégations indépendantes, "
+            "puis fais une réponse courte à partir de leurs comptes rendus en respectant les remarques du Validateur. "
+            "Pour la météo, utilise directement weather_read. Tous les outils sont contrôlés par les règles de sécurité de "
             "Friday : utilise-les quand la demande l'exige, sans demander la permission toi-même (Friday demande au "
             "maître quand il le faut). Si un outil refuse ou échoue, dis-le simplement ; n'affirme jamais une "
             "action qu'un outil n'a pas confirmée. N'annonce pas ce que tu vas faire avant d'utiliser un outil : "

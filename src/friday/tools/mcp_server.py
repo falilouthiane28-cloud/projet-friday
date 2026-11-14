@@ -5,7 +5,7 @@ Claude Code le lance (via `--mcp-config`) ; il parle JSON-RPC 2.0 sur stdin/stdo
 Unix de `ToolGateway`. Toute la logique (outils, guardrails, confirmation, audit) reste
 dans le cœur : ce fichier ne décide rien et n'importe pas le paquet `friday`.
 
-    python -I mcp_server.py --socket /chemin/tools.sock
+    python -I mcp_server.py --socket /chemin/tools.sock [--agent researcher --run ab12cd34]
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Any
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_INFO = {"name": "friday", "version": "0.1.0"}
-CALL_TIMEOUT_S = 120          # au-delà des 60 s d'attente de confirmation
+CALL_TIMEOUT_S = 300          # délégation à un agent (avec ses propres confirmations de 60 s)
 
 
 def ask_core(sock_path: str, request: dict[str, Any], timeout: float = CALL_TIMEOUT_S) -> dict[str, Any]:
@@ -35,7 +35,7 @@ def ask_core(sock_path: str, request: dict[str, Any], timeout: float = CALL_TIME
     return json.loads(buf.decode() or "{}")
 
 
-def handle(msg: dict[str, Any], sock_path: str) -> dict[str, Any] | None:
+def handle(msg: dict[str, Any], sock_path: str, who: dict[str, str] | None = None) -> dict[str, Any] | None:
     """Message JSON-RPC → réponse (None pour une notification)."""
     method, mid = msg.get("method"), msg.get("id")
     if mid is None:                              # notification (initialized, cancelled…)
@@ -51,7 +51,7 @@ def handle(msg: dict[str, Any], sock_path: str) -> dict[str, Any] | None:
         return ok({})
     if method == "tools/list":
         try:
-            tools = ask_core(sock_path, {"op": "list"}).get("tools", [])
+            tools = ask_core(sock_path, {"op": "list", **(who or {})}).get("tools", [])
         except OSError:
             tools = []
         return ok({"tools": tools})
@@ -59,7 +59,7 @@ def handle(msg: dict[str, Any], sock_path: str) -> dict[str, Any] | None:
         params = msg.get("params") or {}
         try:
             res = ask_core(sock_path, {"op": "call", "name": params.get("name"),
-                                       "arguments": params.get("arguments") or {}})
+                                       "arguments": params.get("arguments") or {}, **(who or {})})
             text, is_error = str(res.get("text", "")), not res.get("ok", False)
         except (OSError, ValueError) as exc:
             text, is_error = f"Le cœur de Friday est injoignable ({exc}).", True
@@ -72,6 +72,8 @@ def main(argv: list[str]) -> int:
         print("usage : mcp_server.py --socket <chemin>", file=sys.stderr)
         return 2
     sock_path = argv[argv.index("--socket") + 1]
+    who = {k: argv[argv.index(f"--{k}") + 1] for k in ("agent", "run")
+           if f"--{k}" in argv and argv.index(f"--{k}") + 1 < len(argv)}
     for line in sys.stdin:
         if not line.strip():
             continue
@@ -81,7 +83,7 @@ def main(argv: list[str]) -> int:
             out: dict[str, Any] | None = {"jsonrpc": "2.0", "id": None,
                                           "error": {"code": -32700, "message": "JSON invalide"}}
         else:
-            out = handle(msg, sock_path) if isinstance(msg, dict) else None
+            out = handle(msg, sock_path, who) if isinstance(msg, dict) else None
         if out is not None:
             sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
             sys.stdout.flush()

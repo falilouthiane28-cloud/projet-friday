@@ -50,6 +50,8 @@ guardrails:
     calendar.create_event: 2
     home.set_light: 2
     file.write: 2
+    code.run: 2              # Codeur : Python en bac à sable (sans réseau ni dossier personnel)
+    agent.delegate: 3        # délégation à un agent ; ses propres actions repassent par ces règles
     weather.read: 3
     web.search: 3
     web.read: 3

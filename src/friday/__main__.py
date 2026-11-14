@@ -20,6 +20,7 @@ from .config import FridayConfig, load_config
 from .guardrails import GuardrailsEngine
 from .log import setup_logging
 from .soul import load_soul
+from .agents import AgentRunner, default_registry, delegate_tools
 from .tools import ToolGateway, default_tools
 from .voice import CoreServer, VoiceBridge
 
@@ -76,7 +77,11 @@ def main() -> None:
     brain = make_brain(cfg, soul, audit)
     try:
         if "--serve" in sys.argv:
-            gateway = ToolGateway(default_tools(cfg.default_city), guardrails, audit)
+            registry = default_registry()
+            gateway = ToolGateway(default_tools(cfg.default_city), guardrails, audit, allowed=registry.allowed_tools)
+            if binary := getattr(getattr(brain, "remote", None), "binary", None):
+                runner = AgentRunner(registry, gateway, binary, cfg.audit_db_path.parent / "claude-agents")
+                gateway.add_tools(delegate_tools(registry, runner))
             server = CoreServer(conductor, brain, audit, name=soul["IDENTITY"]["name"], gateway=gateway)
             sys.exit(asyncio.run(server.run()))
         if "--voice" in sys.argv:

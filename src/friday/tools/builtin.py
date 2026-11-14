@@ -311,5 +311,62 @@ def web_read_tool(fetch: Fetcher = fast_fetch, resolve: Callable[[str], list[str
         run=run, summary=summary, destination="web")
 
 
+# --- Code (bac à sable) ----------------------------------------------------------------------
+
+CODE_TIMEOUT_S = 10
+MAX_CODE_OUTPUT = 4000
+
+
+def sandbox_profile(workdir: str, home: str) -> str:
+    """Profil sandbox-exec : ni réseau, ni lecture du dossier personnel, écriture dans `workdir` seulement."""
+    q = lambda p: json.dumps(os.path.realpath(p))          # chaîne SBPL entre guillemets  # noqa: E731
+    return ("(version 1)\n(allow default)\n(deny network*)\n"
+            f"(deny file-read* (subpath {q(home)}))\n(deny file-write*)\n"
+            f"(allow file-read* file-write* (subpath {q(workdir)}))\n(allow file-write* (literal \"/dev/null\"))\n")
+
+
+def code_run_tool(python: str | None = None, timeout: float = CODE_TIMEOUT_S) -> Tool:
+    import sys
+    import tempfile
+    interpreter = python or os.path.realpath(getattr(sys, "_base_executable", sys.executable))
+
+    def summary(a: dict[str, Any]) -> str:
+        first = next((l for l in a["code"].splitlines() if l.strip()), "")
+        return f"Exécuter du Python en bac à sable ({len(a['code'].splitlines())} lignes : {first[:60]})"
+
+    async def run(a: dict[str, Any]) -> str:
+        if len(a["code"]) > 20_000:
+            raise ToolError("Code trop long (20 000 caractères au plus).")
+        with tempfile.TemporaryDirectory(prefix="friday-code-") as tmp:
+            script = os.path.join(tmp, "main.py")
+            with open(script, "w", encoding="utf-8") as f:
+                f.write(a["code"])
+            proc = await asyncio.create_subprocess_exec(
+                "/usr/bin/sandbox-exec", "-p", sandbox_profile(tmp, os.path.expanduser("~")),
+                interpreter, "-I", script, cwd=tmp, stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                env={"PATH": "/usr/bin:/bin", "HOME": tmp, "LANG": "fr_FR.UTF-8"})
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+                raise ToolError(f"Exécution arrêtée après {int(timeout)} s.") from None
+        text = out.decode(errors="replace")
+        if len(text) > MAX_CODE_OUTPUT:
+            text = text[:MAX_CODE_OUTPUT] + "\n… (sortie tronquée)"
+        return f"Code exécuté (code de sortie {proc.returncode}).\n{text.strip() or '(aucune sortie)'}"
+
+    return Tool(
+        name="code_run", action="code.run",
+        description="Exécute un script Python 3 (bibliothèque standard) dans un bac à sable : pas de réseau, pas "
+                    f"d'accès au dossier personnel, {CODE_TIMEOUT_S} s au plus. Renvoie la sortie (print).",
+        schema={"type": "object", "properties": {
+                    "code": {"type": "string", "description": "Script Python complet ; afficher le résultat avec print."}},
+                "required": ["code"], "additionalProperties": False},
+        run=run, summary=summary, extra={"code_field": "code"})
+
+
 def default_tools(default_city: str | None = None) -> list[Tool]:
-    return [reminder_tool(), weather_tool(default_city=default_city), web_search_tool(), web_read_tool()]
+    return [reminder_tool(), weather_tool(default_city=default_city), web_search_tool(), web_read_tool(),
+            code_run_tool()]
