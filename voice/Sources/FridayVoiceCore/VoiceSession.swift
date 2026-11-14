@@ -104,6 +104,14 @@ public struct VoiceSession: Sendable {
         return [enter(.idle, at: now)] + reset()
     }
 
+    /// Écoute demandée sans mot d'activation (bouton micro, raccourci global). Coupe la parole si besoin.
+    public mutating func onListen(now: TimeInterval) -> [VoiceEffect] {
+        guard state != .listening else { return [] }
+        let stop: [VoiceEffect] = state == .speaking ? [.stopSpeaking] : []
+        speakingText = ""
+        return stop + [enter(.listening, at: now)] + reset()
+    }
+
     public mutating func onStop(now: TimeInterval) -> [VoiceEffect] {
         let stop: [VoiceEffect] = state == .speaking ? [.stopSpeaking] : []
         return stop + [enter(.idle, at: now)] + reset()

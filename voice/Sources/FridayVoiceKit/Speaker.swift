@@ -2,7 +2,7 @@ import AVFoundation
 
 /// TTS AVSpeechSynthesizer rendu dans le même AVAudioEngine que le micro :
 /// la sortie passe par l'unité voice-processing, donc l'annulation d'écho la retire du micro.
-final class Speaker: @unchecked Sendable {
+public final class Speaker: @unchecked Sendable {
     private let synth = AVSpeechSynthesizer()
     private let player = AVAudioPlayerNode()
     private let format: AVAudioFormat
@@ -13,23 +13,23 @@ final class Speaker: @unchecked Sendable {
     private var synthDone = false
     private let queue = DispatchQueue(label: "friday.speaker")
 
-    var onFirstAudio: (@Sendable () -> Void)?
-    var onFinished: (@Sendable () -> Void)?
+    public var onFirstAudio: (@Sendable () -> Void)?
+    public var onFinished: (@Sendable () -> Void)?
 
-    init(engine: AVAudioEngine, language: String) {
+    public init(engine: AVAudioEngine, language: String) {
         format = AVAudioFormat(standardFormatWithSampleRate: 22_050, channels: 1)!
         voice = Speaker.bestVoice(language: language)
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
     }
 
-    static func bestVoice(language: String) -> AVSpeechSynthesisVoice? {
+    public static func bestVoice(language: String) -> AVSpeechSynthesisVoice? {
         AVSpeechSynthesisVoice.speechVoices()
             .filter { $0.language == language }
             .max { $0.quality.rawValue < $1.quality.rawValue } ?? AVSpeechSynthesisVoice(language: language)
     }
 
-    func speak(_ text: String) {
+    public func speak(_ text: String) {
         queue.sync {
             generation += 1
             pending = 0
@@ -64,7 +64,7 @@ final class Speaker: @unchecked Sendable {
         }
     }
 
-    func stop() {
+    public func stop() {
         queue.sync { generation += 1 }
         synth.stopSpeaking(at: .immediate)
         player.stop()

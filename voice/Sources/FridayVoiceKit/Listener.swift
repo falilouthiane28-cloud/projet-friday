@@ -2,37 +2,46 @@ import AVFoundation
 import CoreMedia
 import Speech
 
+/// Journal du pipeline (stderr par défaut ; l'app peut le rediriger).
+public enum VoiceLog {
+    nonisolated(unsafe) public static var log: @Sendable (String) -> Void = { text in
+        FileHandle.standardError.write(Data("[friday-voice] \(text)\n".utf8))
+    }
+}
+
 /// Micro (annulation d'écho Apple) → SpeechAnalyzer + SpeechTranscriber, sur l'appareil.
-final class Listener: @unchecked Sendable {
-    let engine: AVAudioEngine
+public final class Listener: @unchecked Sendable {
+    public let engine: AVAudioEngine
     private let locale: Locale
     private var analyzer: SpeechAnalyzer?
     private var continuation: AsyncStream<AnalyzerInput>.Continuation?
 
     /// texte, définitif ?, fin du segment audio (secondes)
-    var onResult: (@Sendable (String, Bool, Double) -> Void)?
+    public var onResult: (@Sendable (String, Bool, Double) -> Void)?
+    /// RMS linéaire de chaque tampon micro (niveau pour l'avatar).
+    public var onLevel: (@Sendable (Float) -> Void)?
 
-    init(engine: AVAudioEngine, locale: Locale) {
+    public init(engine: AVAudioEngine, locale: Locale) {
         self.engine = engine
         self.locale = locale
     }
 
-    static func makeTranscriber(_ locale: Locale) -> SpeechTranscriber {
+    public static func makeTranscriber(_ locale: Locale) -> SpeechTranscriber {
         SpeechTranscriber(locale: locale, transcriptionOptions: [],
                           reportingOptions: [.volatileResults, .fastResults],
                           attributeOptions: [.audioTimeRange])
     }
 
     /// Installe le modèle de la langue si besoin (asset système Apple).
-    static func ensureModel(_ transcriber: SpeechTranscriber) async throws {
+    public static func ensureModel(_ transcriber: SpeechTranscriber) async throws {
         if await AssetInventory.status(forModules: [transcriber]) == .installed { return }
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-            IO.log("téléchargement du modèle de transcription…")
+            VoiceLog.log("téléchargement du modèle de transcription…")
             try await request.downloadAndInstall()
         }
     }
 
-    func start() async throws {
+    public func start() async throws {
         let input = engine.inputNode
         try input.setVoiceProcessingEnabled(true)            // annulation d'écho + réduction de bruit
         let inFormat = input.outputFormat(forBus: 0)
@@ -54,7 +63,8 @@ final class Listener: @unchecked Sendable {
         let (stream, continuation) = AsyncStream<AnalyzerInput>.makeStream()
         self.continuation = continuation
 
-        input.installTap(onBus: 0, bufferSize: 1024, format: inFormat) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 1024, format: inFormat) { [weak self] buffer, _ in
+            if let level = self?.onLevel { level(Listener.rms(buffer)) }
             let ratio = target.sampleRate / inFormat.sampleRate
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 512
             guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
@@ -76,7 +86,7 @@ final class Listener: @unchecked Sendable {
                     self?.onResult?(String(result.text.characters), result.isFinal, end.isFinite ? end : 0)
                 }
             } catch {
-                IO.log("transcription interrompue : \(error.localizedDescription)")
+                VoiceLog.log("transcription interrompue : \(error.localizedDescription)")
             }
         }
         try await analyzer.start(inputSequence: stream)
@@ -84,7 +94,15 @@ final class Listener: @unchecked Sendable {
         try engine.start()
     }
 
-    func stop() async {
+    static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
+        guard let data = buffer.floatChannelData, buffer.frameLength > 0 else { return 0 }
+        let n = Int(buffer.frameLength)
+        var sum: Float = 0
+        for i in 0..<n { sum += data[0][i] * data[0][i] }
+        return (sum / Float(n)).squareRoot()
+    }
+
+    public func stop() async {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         continuation?.finish()

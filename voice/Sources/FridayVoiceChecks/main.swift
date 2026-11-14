@@ -82,6 +82,50 @@ check(av.clear(now: 25) == [.neutral], "clear")
 _ = av.request(.listening, now: 26)
 check(av.tick(now: 60).isEmpty, "l'écoute n'expire pas")
 
+// --- Écoute manuelle (bouton micro, raccourci global) ---
+var m = VoiceSession()
+check(m.onListen(now: 0) == [.state(.listening), .resetTranscript], "idle → listening sans wake word")
+check(m.onListen(now: 0.1).isEmpty, "déjà à l'écoute")
+_ = m.onTranscript("quelle heure est-il", now: 0.5)
+check(m.onTick(now: 1.3) == [.utterance("quelle heure est il"), .state(.processing), .resetTranscript], "commande sans wake word")
+_ = m.onSay("Il est dix heures.", now: 2)
+check(m.onListen(now: 2.5) == [.stopSpeaking, .state(.listening), .resetTranscript], "écoute coupe la parole")
+
+// --- Protocole app ↔ cœur Python ---
+check(CoreRequest.ask(id: 3, text: "Quelle heure ?", source: "text").jsonLine()
+      == #"{"id":3,"source":"text","text":"Quelle heure ?","type":"ask"}"#, "ask encodé")
+check(CoreRequest.metrics(ttfaMs: 420).jsonLine() == #"{"ttfa_ms":420,"type":"metrics"}"#, "metrics encodé")
+check(CoreRequest.shutdown.jsonLine() == #"{"type":"shutdown"}"#, "shutdown encodé")
+check(CoreEvent.parse(#"{"type":"ready","name":"FRIDAY"}"#) == .ready(name: "FRIDAY"), "ready lu")
+check(CoreEvent.parse(#"{"type":"reply","id":3,"text":"Il est 10 h.","intent":"general","agent":"conductor"}"#)
+      == .reply(id: 3, text: "Il est 10 h.", intent: "general", agent: "conductor"), "reply lu")
+check(CoreEvent.parse(#"{"type":"reply","text":"sans id"}"#) == nil, "reply sans id refusé")
+check(CoreEvent.parse(#"{"type":"error","message":"boum"}"#) == .error("boum"), "error lu")
+check(CoreEvent.parse("pas du json") == nil && CoreEvent.parse(#"{"type":"say"}"#) == nil, "messages inconnus ignorés")
+
+// --- Niveau audio ---
+check(AudioLevel.normalized(rms: 0) == 0 && AudioLevel.normalized(rms: .nan) == 0, "silence → 0")
+check(AudioLevel.normalized(rms: 0.001) == 0, "sous le plancher (-60 dB) → 0")
+check(abs(AudioLevel.normalized(rms: 0.01) - 0.25) < 0.001, "-40 dB → 0,25")
+check(AudioLevel.normalized(rms: 1) == 1, "plein niveau → 1")
+check(AudioLevel.smoothed(previous: 0, target: 1) > AudioLevel.smoothed(previous: 1, target: 0) - 0.5, "montée plus rapide que la descente")
+check(abs(AudioLevel.smoothed(previous: 1, target: 0) - 0.85) < 0.001, "descente lente")
+
+// --- Racine du dépôt ---
+let fakeRoot = URL(fileURLWithPath: "/depot")
+check(findRepoRoot(from: URL(fileURLWithPath: "/depot/voice/.build/release")) { $0.path == "/depot/pyproject.toml" }?.path == fakeRoot.path, "racine trouvée en remontant")
+check(findRepoRoot(from: URL(fileURLWithPath: "/ailleurs/bin")) { _ in false } == nil, "pas de racine")
+
+// --- Voix → avatar ---
+check(VoiceLink.avatar(for: .listening) == .listening && VoiceLink.avatar(for: .processing) == .thinking, "écoute et réflexion")
+check(VoiceLink.avatar(for: .speaking) == .happy && VoiceLink.avatar(for: .idle) == nil, "parole, puis retour à neutre")
+check(VoiceLink.label(voice: .speaking, avatar: .happy) == "Je parle", "libellé parole")
+check(VoiceLink.label(voice: .listening, avatar: .listening) == "À l'écoute", "libellé écoute")
+check(VoiceLink.label(voice: .processing, avatar: .thinking) == "Je réfléchis", "libellé réflexion")
+check(VoiceLink.hotkey(expanded: false, voice: .idle) == .expandAndListen, "raccourci : bulle → fenêtre + écoute")
+check(VoiceLink.hotkey(expanded: true, voice: .listening) == .stopListening, "raccourci : arrête l'écoute")
+check(VoiceLink.hotkey(expanded: true, voice: .speaking) == .listen, "raccourci : coupe la parole et écoute")
+
 print("\(passed) vérifications OK, \(failures) échec(s)")
 if failures > 0 { exit(1) }
 

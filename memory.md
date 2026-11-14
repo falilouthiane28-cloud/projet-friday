@@ -32,4 +32,7 @@
 - Limites des CLT confirmées : pas de `#Preview` ni d'`actool` (icône en `.icns`), Swift Testing possible seulement avec des drapeaux `-F` et `-rpath`.
 - Raccourci global : il faut Cmd ou Ctrl (depuis Sequoia, Option seul échoue) ; ⌃⌥Espace est suggéré.
 - Demande de l'utilisateur : Friday doit rester **tout le temps à l'écran sous forme de bulle**. L'overlay a deux états (bulle 96 px ↔ fenêtre 380×680) et Échap réduit au lieu de masquer.
+- 2026-11-14 : l'app `friday-app` contient la voix (même AVAudioEngine) et lance `.venv/bin/python -m friday --serve` avec `PYTHONPATH=src` ; racine du dépôt trouvée en remontant jusqu'à `pyproject.toml` (ou `FRIDAY_ROOT`). `--config <yaml>` permet un audit isolé dans les tests.
+- KeyboardShortcuts : rester en **1.15.0** ; les versions ≥ 1.16 utilisent `#Preview`/`@Entry`, dont les plugins de macros SwiftUI manquent dans les CLT.
+- Raccourci ⌃⌥Espace : bulle → fenêtre + écoute ; fenêtre à l'écoute → arrêt ; pendant la parole → coupe et écoute (`VoiceSession.onListen`).
 - Conductor : interface `IntentClassifier` prévue pour brancher semantic-router puis Haiku en phase 3.

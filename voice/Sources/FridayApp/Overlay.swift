@@ -125,7 +125,7 @@ struct OverlayView: View {
                 Text("Friday").font(.fHeadline).foregroundStyle(Theme.textPrimary)
                 Text("·").foregroundStyle(Theme.textSecondary)
                 Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(Theme.textPrimary)
-                StateLabel(state: model.avatar)
+                StateLabel(state: model.avatar, text: model.statusLabel)
             }
             ChatThread(messages: model.messages)
             HStack(spacing: 8) {

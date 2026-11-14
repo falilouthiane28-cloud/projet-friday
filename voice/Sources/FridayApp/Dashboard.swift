@@ -40,8 +40,8 @@ struct DashboardView: View {
             }
             ToolbarItemGroup(placement: .primaryAction) {
                 Button { model.toggleListening() } label: {
-                    Label(model.avatar == .listening ? "Arrêter l'écoute" : "Écouter",
-                          systemImage: model.avatar == .listening ? "mic.fill" : "mic")
+                    Label(model.voiceState == .listening ? "Arrêter l'écoute" : "Écouter",
+                          systemImage: model.voiceState == .listening ? "mic.fill" : "mic")
                 }
                 .help("Écouter (⌘⇧F)")
                 Button { openWindow(id: "expressions") } label: { Label("Expressions", systemImage: "face.smiling") }
@@ -99,7 +99,7 @@ struct HubView: View {
         VStack(spacing: 16) {
             Spacer()
             AvatarView(state: model.avatar, size: 180, audioLevel: model.audioLevel)
-            StateLabel(state: model.avatar)
+            StateLabel(state: model.avatar, text: model.statusLabel)
             Text("Bonjour, Thaïne.").font(.fTitle1).foregroundStyle(Theme.textPrimary)
             InputBar(model: model).frame(maxWidth: 500)
             HStack(spacing: 8) {
@@ -122,8 +122,9 @@ struct HubView: View {
 /// État écrit sous l'avatar et annoncé à VoiceOver (jamais l'animation seule).
 struct StateLabel: View {
     let state: AvatarState
+    var text: String? = nil                        // libellé imposé (ex. « Je parle »)
     var body: some View {
-        Text(state.label)
+        Text(text ?? state.label)
             .font(.fCaption).foregroundStyle(Theme.textSecondary)
             .accessibilityAddTraits(.updatesFrequently)
             .onChange(of: state) { _, new in AccessibilityNotification.Announcement(new.label).post() }
@@ -144,14 +145,14 @@ struct InputBar: View {
                 .onSubmit { model.send() }
                 .accessibilityLabel("Message à Friday")
             Button { model.toggleListening() } label: {
-                Image(systemName: model.avatar == .listening ? "mic.fill" : "mic")
+                Image(systemName: model.voiceState == .listening ? "mic.fill" : "mic")
                     .font(.system(size: 16, weight: .medium))
                     .frame(width: 28, height: 28)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
             .foregroundStyle(Theme.textPrimary)
-            .accessibilityLabel(model.avatar == .listening ? "Arrêter l'écoute" : "Écouter")
+            .accessibilityLabel(model.voiceState == .listening ? "Arrêter l'écoute" : "Écouter")
             .help("Écouter")
         }
         .padding(.leading, 16).padding(.trailing, 8)

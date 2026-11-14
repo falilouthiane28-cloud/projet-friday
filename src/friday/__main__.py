@@ -2,6 +2,7 @@
 
     python -m friday           → boucle texte
     python -m friday --voice   → pipeline vocal (binaire Swift friday-voice)
+    python -m friday --serve   → cœur en sous-processus de l'app friday-app (JSON Lines)
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from .config import FridayConfig, load_config
 from .guardrails import GuardrailsEngine
 from .log import setup_logging
 from .soul import load_soul
-from .voice import VoiceBridge
+from .voice import CoreServer, VoiceBridge
 
 
 async def text_loop(conductor: Conductor, brain: LocalBrain) -> None:
@@ -45,7 +46,8 @@ async def voice_loop(cfg: FridayConfig, conductor: Conductor, brain: LocalBrain,
 
 
 def main() -> None:
-    cfg = load_config()
+    i = sys.argv.index("--config") if "--config" in sys.argv else -1
+    cfg = load_config(sys.argv[i + 1] if 0 <= i < len(sys.argv) - 1 else None)
     setup_logging(cfg.log_level, cfg.log_json)
     soul = load_soul(cfg.soul_path)
     audit = AuditLog(cfg.audit_db_path)
@@ -53,6 +55,9 @@ def main() -> None:
     conductor = Conductor(guardrails=guardrails, audit=audit)
     brain = LocalBrain()
     try:
+        if "--serve" in sys.argv:
+            server = CoreServer(conductor, brain, audit, name=soul["IDENTITY"]["name"])
+            sys.exit(asyncio.run(server.run()))
         if "--voice" in sys.argv:
             sys.exit(asyncio.run(voice_loop(cfg, conductor, brain, audit)))
         print(f"{soul['IDENTITY']['name']} prêt. Ctrl-D pour quitter.")
