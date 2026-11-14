@@ -36,9 +36,9 @@ def make_gateway(audit, registry, calls):
 # --- Registre ---
 def test_registre_par_defaut_et_outils_permis():
     reg = default_registry()
-    assert [a.name for a in reg.all()] == ["researcher", "scheduler", "coder"]
+    assert [a.name for a in reg.all()] == ["researcher", "scheduler", "coder", "home_controller"]
     assert reg.allowed_tools(CONDUCTOR) == {"weather_read", "delegate_researcher", "delegate_scheduler",
-                                            "delegate_coder"}
+                                            "delegate_coder", "delegate_home_controller"}
     assert reg.allowed_tools("researcher") == {"web_search", "web_read"}
     assert reg.allowed_tools("scheduler") == {"calendar_read", "calendar_create_event", "reminder_create"}
     assert set(reg.get("scheduler").writes) == {"calendar_create_event", "reminder_create"}

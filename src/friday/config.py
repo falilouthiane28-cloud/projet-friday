@@ -37,6 +37,9 @@ class FridayConfig:
     claude_timeout_s: float = 60
     memory_model: str = "haiku"                # extraction des faits (appel séparé, rapide)
     default_city: str | None = None            # ville de la météo quand l'utilisateur n'en donne pas
+    ha_url: str | None = None                  # Home Assistant (None : non configuré)
+    ha_keychain_service: str = "friday-home-assistant"   # jeton dans le trousseau, jamais en config
+    ha_timeout_s: float = 5
 
 
 def _resolve(path: str | Path, base: Path) -> Path:
@@ -55,6 +58,9 @@ def load_config(path: str | Path | None = None) -> FridayConfig:
     gr = raw.get("guardrails", {})
     voice = raw.get("voice", {})
     brain = raw.get("brain", {})
+    ha = raw.get("home_assistant") or {}
+    if "token" in ha:
+        raise ValueError("home_assistant.token interdit en configuration : le jeton va dans le trousseau macOS")
 
     tiers = {str(k): int(v) for k, v in (gr.get("actions") or {}).items()}
     for name, tier in tiers.items():
@@ -82,4 +88,7 @@ def load_config(path: str | Path | None = None) -> FridayConfig:
         claude_timeout_s=float(brain.get("timeout_s", 60)),
         memory_model=str(brain.get("memory_model", "haiku")),
         default_city=(raw.get("tools") or {}).get("default_city"),
+        ha_url=ha.get("url") or None,
+        ha_keychain_service=str(ha.get("keychain_service") or "friday-home-assistant"),
+        ha_timeout_s=float(ha.get("timeout_s", 5)),
     )

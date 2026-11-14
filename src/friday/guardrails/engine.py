@@ -28,6 +28,7 @@ TIER_FLOORS: Mapping[str, Tier] = MappingProxyType({
     "payment.execute": Tier.DESTRUCTIVE,
     "shell.exec": Tier.DESTRUCTIVE,
     "memory.delete": Tier.DESTRUCTIVE,
+    "home.secure": Tier.DESTRUCTIVE,          # serrures, alarme, garage, volets
 })
 DESTRUCTIVE_SUFFIXES: tuple[str, ...] = (".delete", ".remove", ".purge", ".exec", ".send", ".pay")
 

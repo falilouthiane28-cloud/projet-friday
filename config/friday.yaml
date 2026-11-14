@@ -32,6 +32,14 @@ tools:
   # Outils de Claude Code (serveur MCP de Friday), chacun soumis aux guardrails ci-dessous.
   default_city: null     # ville de la météo par défaut (ex. Paris) ; null : Claude demande
 
+home_assistant:
+  # Domotique (phase 6) : API REST de Home Assistant. null : non configuré (Friday le dit).
+  # Le jeton n'est JAMAIS ici : trousseau macOS, service ci-dessous, compte « friday » :
+  #   security add-generic-password -U -s friday-home-assistant -a friday -w
+  url: null              # ex. http://homeassistant.local:8123
+  keychain_service: friday-home-assistant
+  timeout_s: 5
+
 conductor:
   # En dessous de ce score, l'intention retombe sur « conversation ».
   min_confidence: 0.3
@@ -48,11 +56,15 @@ guardrails:
     payment.execute: 1
     reminder.create: 2
     calendar.create_event: 2
+    home.secure: 1           # serrures, alarme, portes de garage, volets (plancher Tier 1 codé en dur)
     home.set_light: 2
+    home.set_switch: 2       # prises et interrupteurs
+    home.scene: 2            # scènes (refusées si elles touchent serrure, alarme ou volet)
     file.write: 2
     code.run: 2              # Codeur : Python en bac à sable (sans réseau ni dossier personnel)
     agent.delegate: 3        # délégation à un agent ; ses propres actions repassent par ces règles
     calendar.read: 3          # Planificateur : lecture de l'agenda (Calendrier macOS)
+    home.read: 3             # état des appareils Home Assistant
     weather.read: 3
     web.search: 3
     web.read: 3

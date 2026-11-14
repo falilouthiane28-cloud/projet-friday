@@ -25,7 +25,10 @@ from ..tools.gateway import ToolGateway, ToolRecord
 from .registry import AgentRegistry, AgentSpec
 
 _CLAIM = re.compile(r"\b(cré[ée]e?s?|ajout[ée]e?s?|programm[ée]e?s?|enregistr[ée]e?s?|planifi[ée]e?s?|"
-                    r"exécut[ée]e?s?|lanc[ée]e?s?|envoy[ée]e?s?)\b", re.IGNORECASE)
+                    r"exécut[ée]e?s?|lanc[ée]e?s?|envoy[ée]e?s?|activ[ée]e?s?)\b"
+                    # domotique : « j'ai allumé », « a été verrouillée » (pas « est allumée », simple état lu)
+                    r"|\b(ai|as|a|avons|ont)\s+(bien\s+)?(été\s+)?(allum|étei|ouv|ferm|verrouill|déverrouill|arm|"
+                    r"désarm|régl|bascul)\w*", re.IGNORECASE)
 
 
 def validate(spec: AgentSpec, text: str, records: Sequence[ToolRecord]) -> str:

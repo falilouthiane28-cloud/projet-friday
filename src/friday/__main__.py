@@ -21,7 +21,7 @@ from .guardrails import GuardrailsEngine
 from .log import setup_logging
 from .soul import load_soul
 from .agents import AgentRunner, default_registry, delegate_tools
-from .tools import ToolGateway, default_tools
+from .tools import HomeAssistantClient, ToolGateway, default_tools, home_tools
 from .voice import CoreServer, VoiceBridge
 
 
@@ -78,7 +78,9 @@ def main() -> None:
     try:
         if "--serve" in sys.argv:
             registry = default_registry()
-            gateway = ToolGateway(default_tools(cfg.default_city), guardrails, audit, allowed=registry.allowed_tools)
+            home = HomeAssistantClient(cfg.ha_url, cfg.ha_keychain_service, cfg.ha_timeout_s)
+            gateway = ToolGateway(default_tools(cfg.default_city) + home_tools(home), guardrails, audit,
+                                  allowed=registry.allowed_tools)
             if binary := getattr(getattr(brain, "remote", None), "binary", None):
                 runner = AgentRunner(registry, gateway, binary, cfg.audit_db_path.parent / "claude-agents")
                 gateway.add_tools(delegate_tools(registry, runner))
