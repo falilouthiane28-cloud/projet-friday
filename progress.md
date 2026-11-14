@@ -3,6 +3,13 @@
 > Entrée datée à chaque grosse modification. Dernière entrée en haut.
 
 ## En cours
+- 2026-11-14 : **UX premium du dashboard**, codée et vérifiée, **non commitée** (en attente de l'accord). Fait :
+  - la bulle se masque quand le dashboard est au premier plan et revient quand Finder passe devant (vérifié en réel par la liste des fenêtres) ;
+  - 6 sections fonctionnelles (Accueil, Conversations, Agents, Mémoire, Domotique, Système), raccourcis ⌘1 à ⌘6 ;
+  - message `dashboard` du cœur : météo Dakar réelle, agenda du jour réel, registre des agents, état de Home Assistant ;
+  - plus aucune donnée de démonstration, l'horloge est sortie de la barre d'outils, Routines et Fichiers sont retirés.
+  Tests : pytest vert et 119 vérifications Swift. Règles du chantier : `docs/regles-ux-dashboard.md`. Agents : `.claude/agents/`. **Prochaine étape** : essai par le maître (cliquer les sections, fermer le dashboard), puis commit.
+  Pas encore vérifié en réel : la fermeture et la réduction de la fenêtre (Accessibilité non autorisée), ainsi que la section Conversations, qu'ImageRenderer ne rend pas.
 - Phase 8 (communication et finitions) codée et testée le 14/11, **non commitée** (attend l'accord). 309 tests verts. Bilan : `docs/phase8-communication.md`. **Prochaine étape** : accord pour commit, puis test réel par le maître (autoriser Mail et Messages dans Automatisation, Accès complet au disque pour lire Messages) : « résume mes e-mails », brouillon, iMessage avec confirmation.
 
 - Phase 7 (sécurité) codée et testée le 14/11, **non commitée** (attend l'accord) : CaMeL light, jetons de capacité, sandbox durci, courtier de secrets, masquage logs/audit, `--verify-audit`. 273 tests verts. Rapport : `docs/securite-phase7.md`. **Prochaine étape** : commit, puis phase 8.

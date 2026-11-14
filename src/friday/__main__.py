@@ -22,6 +22,7 @@ from .guardrails import GuardrailsEngine
 from .log import setup_logging
 from .soul import load_soul
 from .agents import AgentRunner, default_registry, delegate_tools
+from .dashboard import DashboardData
 from .tools import HomeAssistantClient, ToolGateway, comms_tools, default_tools, home_tools, system_read_tool
 from .tools.system import SystemWatcher
 from .voice import CoreServer, VoiceBridge
@@ -103,7 +104,8 @@ def main() -> None:
                 runner = AgentRunner(registry, gateway, binary, cfg.audit_db_path.parent / "claude-agents")
                 gateway.add_tools(delegate_tools(registry, runner))
             server = CoreServer(conductor, brain, audit, name=soul["IDENTITY"]["name"], gateway=gateway,
-                                watcher=SystemWatcher())
+                                watcher=SystemWatcher(),
+                                dashboard=DashboardData(registry, cfg.default_city, home_configured=bool(cfg.ha_url)))
             sys.exit(asyncio.run(server.run()))
         if "--voice" in sys.argv:
             sys.exit(asyncio.run(voice_loop(cfg, conductor, brain, audit)))

@@ -62,6 +62,12 @@ struct MenuBarLabel: View {
                 model.openWindowAction = { openWindow(id: $0) }
                 model.openSettingsAction = { openSettings() }
                 model.log("actions de fenêtre capturées (dashboard, réglages)")
+                // `friday-app --dashboard [section]` : ouvre le dashboard au lancement (vérification).
+                let args = CommandLine.arguments
+                if let i = args.firstIndex(of: "--dashboard") {
+                    let section = i + 1 < args.count ? DashSection(rawValue: args[i + 1]) : nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { model.openDashboard(section ?? .accueil) }
+                }
             }
     }
 }

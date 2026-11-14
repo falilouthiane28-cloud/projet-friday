@@ -15,6 +15,7 @@ public enum CoreRequest: Equatable, Sendable {
     case shutdown
     case memoryList                                     // « Ce dont Friday se souvient… »
     case memoryForget(id: Int)                          // oublier un fait précis
+    case dashboard                                      // météo, agenda du jour, agents, domotique
 
     public func jsonLine() -> String {
         var obj: [String: Any]
@@ -26,6 +27,7 @@ public enum CoreRequest: Equatable, Sendable {
         case .shutdown: obj = ["type": "shutdown"]
         case .memoryList: obj = ["type": "memory_list"]
         case .memoryForget(let id): obj = ["type": "memory_forget", "id": id]
+        case .dashboard: obj = ["type": "dashboard"]
         }
         let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self)
@@ -41,6 +43,7 @@ public enum CoreEvent: Equatable, Sendable {
     case confirmExpired(id: Int)                        // 60 s sans réponse : refusée par le cœur
     case notice(String)                                 // action Tier 2 exécutée
     case memory(facts: [MemoryFact], available: Bool, forgot: Bool?)   // faits mémorisés (plus récents d'abord)
+    case dashboard(DashboardInfo)                       // données réelles du dashboard
 
     public static func parse(_ line: String) -> CoreEvent? {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
@@ -74,7 +77,117 @@ public enum CoreEvent: Equatable, Sendable {
                                   createdAt: f["created_at"] as? String ?? "")
             }
             return .memory(facts: facts, available: obj["available"] as? Bool ?? true, forgot: obj["forgot"] as? Bool)
+        case "dashboard":
+            return .dashboard(DashboardInfo(obj))
         default: return nil
+        }
+    }
+}
+
+/// Données réelles du dashboard (réponse au message `dashboard`). Chaque bloc peut manquer, avec sa raison.
+public struct DashboardInfo: Equatable, Sendable {
+    public struct Weather: Equatable, Sendable {
+        public let city: String
+        public let temperature: Double
+        public let feelsLike: Double?
+        public let code: Int
+        public let label: String
+        public let wind: Double?
+        public let isDay: Bool
+        public let min: Double?
+        public let max: Double?
+        public let rain: Int?
+
+        public init(city: String, temperature: Double, feelsLike: Double? = nil, code: Int, label: String,
+                    wind: Double? = nil, isDay: Bool = true, min: Double? = nil, max: Double? = nil, rain: Int? = nil) {
+            self.city = city; self.temperature = temperature; self.feelsLike = feelsLike; self.code = code
+            self.label = label; self.wind = wind; self.isDay = isDay; self.min = min; self.max = max; self.rain = rain
+        }
+
+        /// SF Symbol du code météo WMO (jour / nuit).
+        public var symbol: String {
+            switch code {
+            case 0: isDay ? "sun.max" : "moon.stars"
+            case 1, 2: isDay ? "cloud.sun" : "cloud.moon"
+            case 3: "cloud"
+            case 45, 48: "cloud.fog"
+            case 51...57: "cloud.drizzle"
+            case 61...67, 80...82: "cloud.rain"
+            case 71...77, 85, 86: "cloud.snow"
+            case 95...99: "cloud.bolt.rain"
+            default: "cloud"
+            }
+        }
+    }
+
+    public struct Event: Equatable, Sendable, Identifiable {
+        public var id: String { start + title }
+        public let start: String                        // ISO 8601 local, sans fuseau
+        public let end: String
+        public let title: String
+        public let calendar: String
+        public let allDay: Bool
+
+        public init(start: String, end: String, title: String, calendar: String = "", allDay: Bool = false) {
+            self.start = start; self.end = end; self.title = title; self.calendar = calendar; self.allDay = allDay
+        }
+
+        /// « 14:00 » ou « Journée ».
+        public var timeLabel: String {
+            guard !allDay else { return "Journée" }
+            let t = start.split(separator: "T").dropFirst().first ?? ""
+            return String(t.prefix(5))
+        }
+    }
+
+    public struct Agent: Equatable, Sendable, Identifiable {
+        public var id: String { name }
+        public let name: String
+        public let title: String
+        public let role: String
+        public let model: String
+        public let tools: [String]
+
+        public init(name: String, title: String, role: String = "", model: String = "sonnet", tools: [String] = []) {
+            self.name = name; self.title = title; self.role = role; self.model = model; self.tools = tools
+        }
+    }
+
+    public var unavailable = false                      // cœur sans source de données
+    public var city: String?
+    public var weather: Weather?
+    public var weatherError: String?
+    public var agenda: [Event]?
+    public var agendaError: String?
+    public var agents: [Agent] = []
+    public var homeConfigured = false
+
+    public init() {}
+
+    public init(_ obj: [String: Any]) {
+        unavailable = obj["unavailable"] as? Bool ?? false
+        city = obj["city"] as? String
+        weatherError = obj["weather_error"] as? String
+        agendaError = obj["agenda_error"] as? String
+        homeConfigured = obj["home_configured"] as? Bool ?? false
+        func num(_ v: Any?) -> Double? { (v as? NSNumber)?.doubleValue }
+        if let w = obj["weather"] as? [String: Any], let t = num(w["temperature"]) {
+            weather = Weather(city: w["city"] as? String ?? city ?? "", temperature: t, feelsLike: num(w["feels_like"]),
+                              code: (w["code"] as? NSNumber)?.intValue ?? -1, label: w["label"] as? String ?? "",
+                              wind: num(w["wind"]), isDay: w["is_day"] as? Bool ?? true, min: num(w["min"]),
+                              max: num(w["max"]), rain: (w["rain"] as? NSNumber)?.intValue)
+        }
+        if let a = obj["agenda"] as? [[String: Any]] {
+            agenda = a.compactMap { e in
+                guard let s = e["start"] as? String, let title = e["title"] as? String else { return nil }
+                return Event(start: s, end: e["end"] as? String ?? s, title: title,
+                             calendar: e["calendar"] as? String ?? "", allDay: e["all_day"] as? Bool ?? false)
+            }
+        }
+        agents = (obj["agents"] as? [[String: Any]] ?? []).compactMap { a in
+            guard let name = a["name"] as? String, let title = a["title"] as? String else { return nil }
+            return Agent(name: name, title: title, role: a["role"] as? String ?? "", model: a["model"] as? String ?? "",
+                         tools: a["tools"] as? [String] ?? [])
         }
     }
 }

@@ -36,22 +36,85 @@ final class OverlayController {
     static let expandedSize = NSSize(width: 380, height: 680)
     private var panel: FloatingPanel?
     private var model: AppModel?
+    private var userHidden = false                    // masquée depuis le menu « Afficher ou masquer la bulle »
+    private var observers: [NSObjectProtocol] = []
 
-    /// Affiche la bulle (en haut à droite au premier lancement).
+    /// Affiche la bulle (en haut à droite au premier lancement), sauf si le dashboard est au premier plan.
     func show(model: AppModel) {
         self.model = model
+        userHidden = false
         if panel == nil {
             let p = FloatingPanel(content: OverlayRoot(model: model))
             if let screen = NSScreen.main?.visibleFrame {
                 p.setFrameOrigin(NSPoint(x: screen.maxX - Self.bubbleSize.width - 16, y: screen.maxY - Self.bubbleSize.height - 16))
             }
             panel = p
+            observeDashboard()
         }
-        panel?.orderFrontRegardless()
+        updateVisibility()
     }
 
     func toggle(model: AppModel) {
-        if let panel, panel.isVisible { panel.orderOut(nil) } else { show(model: model) }
+        if let panel, panel.isVisible { userHidden = true; updateVisibility() } else { show(model: model) }
+    }
+
+    // MARK: - Dashboard au premier plan → bulle masquée
+
+    /// Fenêtre SwiftUI `Window(id: "dashboard")` (identifiant AppKit « dashboard-AppWindow-1 »).
+    static func dashboardWindow() -> NSWindow? {
+        NSApp.windows.first { $0.identifier?.rawValue.hasPrefix("dashboard") == true }
+    }
+
+    /// Le dashboard est-il visible devant l'utilisateur ? (app active, fenêtre ouverte, non réduite)
+    static func dashboardIsFront() -> Bool {
+        guard NSApp.isActive, let w = dashboardWindow() else { return false }
+        return w.isVisible && !w.isMiniaturized && w.occlusionState.contains(.visible)
+    }
+
+    private func observeDashboard() {
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification, NSWindow.willCloseNotification,
+            NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+            NSWindow.didChangeOcclusionStateNotification,
+            NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+        ]
+        for name in names {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { note in
+                if let w = note.object as? NSWindow, w is FloatingPanel { return }      // la bulle elle-même
+                // willClose arrive avant la fermeture effective : réévaluer au tour suivant.
+                DispatchQueue.main.async { MainActor.assumeIsolated { OverlayController.shared.updateVisibility() } }
+            })
+        }
+    }
+
+    /// Bulle visible sauf si le maître l'a masquée ou si le dashboard est au premier plan.
+    func updateVisibility() {
+        guard let panel, let model else { return }
+        let front = Self.dashboardIsFront()
+        if model.dashboardFront != front {
+            model.dashboardFront = front
+            model.log("dashboard \(front ? "au premier plan : bulle masquée" : "en arrière-plan : bulle affichée")")
+            if front { model.refreshDashboard() }
+        }
+        let visible = !userHidden && !front
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if visible {
+            guard !panel.isVisible || panel.alphaValue < 1 else { return }
+            panel.alphaValue = reduceMotion ? 1 : 0
+            panel.orderFrontRegardless()
+            NSAnimationContext.runAnimationGroup { ctx in ctx.duration = 0.2; panel.animator().alphaValue = 1 }
+        } else if panel.isVisible {
+            if reduceMotion { panel.orderOut(nil); return }
+            NSAnimationContext.runAnimationGroup({ ctx in ctx.duration = 0.15; panel.animator().alphaValue = 0 },
+                                                 completionHandler: {
+                MainActor.assumeIsolated {
+                    // Un nouvel état a pu arriver pendant le fondu : ne masquer que s'il est toujours voulu.
+                    if self.userHidden || Self.dashboardIsFront() { panel.orderOut(nil) }
+                    panel.alphaValue = 1
+                }
+            })
+        }
     }
 
     /// Bulle ↔ fenêtre : le coin supérieur droit reste en place, le cadre reste dans l'écran.
@@ -278,10 +341,12 @@ struct ConfirmCard: View {
 struct MemoryPanel: View {
     let model: AppModel
     var scrolls = true                                // false : rendu --snapshot (ImageRenderer ignore les ScrollView)
+    var embedded = false                              // true : section Mémoire du dashboard (ni retour ni titre)
 
     var body: some View {
         let book = model.memory
         VStack(alignment: .leading, spacing: 10) {
+            if !embedded {
             HStack {
                 Button { model.cancelForget(); model.showingMemory = false } label: {
                     Label("Conversation", systemImage: "chevron.left")
@@ -292,6 +357,7 @@ struct MemoryPanel: View {
             }
             .font(.fCaption)
             Text("Ce dont Friday se souvient").font(.fHeadline).foregroundStyle(Theme.textPrimary)
+            }
             if let msg = book.lastMessage {
                 Label(msg, systemImage: "checkmark.circle").font(.fCaption).foregroundStyle(Theme.textSecondary)
             }

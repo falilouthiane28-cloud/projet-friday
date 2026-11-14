@@ -2,12 +2,13 @@
 
 Protocole JSON Lines (stdin → stdout ; journaux sur stderr) :
 - app → cœur : ask{id, text, source}, metrics{ttfa_ms}, reset, confirm_result{id, ok}, shutdown,
-  memory_list, memory_forget{id}
+  memory_list, memory_forget{id}, dashboard
 - cœur → app : ready{name, brain, tools?}, chunk{id, text} (une phrase, réponse en cours),
   reply{id, text, intent, agent, streamed?, login_required?}, error{message},
   confirm{id, summary, action} (action Tier 1 : Autoriser/Refuser), confirm_expired{id},
   notice{text} (action Tier 2 exécutée),
-  memory{facts: [{id, text, category, created_at}], available, forgot?} (réponse à memory_list / memory_forget)
+  memory{facts: [{id, text, category, created_at}], available, forgot?} (réponse à memory_list / memory_forget),
+  dashboard{city, weather, agenda, agents, home_configured, …} (réponse à dashboard)
 
 Outils : si une `ToolGateway` est fournie, son socket est ouvert au démarrage et Claude Code
 reçoit le serveur MCP relais ; les confirmations Tier 1 passent par l'app.
@@ -54,15 +55,16 @@ def parse_app_message(line: str | bytes) -> dict[str, Any] | None:
         if not isinstance(msg.get("id"), int) or isinstance(msg.get("id"), bool):
             return None
         return msg
-    if kind in ("metrics", "reset", "shutdown", "memory_list"):
+    if kind in ("metrics", "reset", "shutdown", "memory_list", "dashboard"):
         return msg
     return None
 
 
 class CoreServer:
     def __init__(self, conductor: Conductor, brain: Brain, audit: AuditLog | None = None, name: str = "Friday",
-                 gateway: ToolGateway | None = None, watcher: Any = None) -> None:
+                 gateway: ToolGateway | None = None, watcher: Any = None, dashboard: Any = None) -> None:
         self.conductor = conductor
+        self.dashboard = dashboard                   # DashboardData : météo, agenda, agents (message `dashboard`)
         self.watcher = watcher                       # SystemWatcher : alertes proactives (phase 8)
         self._watch: asyncio.Task[None] | None = None
         self.brain = brain
@@ -143,6 +145,10 @@ class CoreServer:
             if forgot and hasattr(self.brain, "reset"):   # la conversation de Claude contient encore le fait
                 self.brain.reset()
             return self._memory_message(forgot=forgot)
+        elif kind == "dashboard":
+            if self.dashboard is None:
+                return {"type": "dashboard", "unavailable": True}
+            return await self.dashboard.collect()
         return None
 
     def _memory_message(self, **extra: Any) -> dict[str, Any]:
@@ -200,7 +206,7 @@ class CoreServer:
                 await asyncio.gather(*pending)     # les réponses en cours partent avant l'arrêt
                 await self._close()
                 return 0
-            if msg["type"] == "ask":              # Claude peut prendre plusieurs secondes : en parallèle
+            if msg["type"] in ("ask", "dashboard"):   # Claude, réseau, osascript : plusieurs secondes, en parallèle
                 task = asyncio.create_task(self._answer(msg, emit))
                 pending.add(task)
                 task.add_done_callback(pending.discard)
@@ -229,7 +235,7 @@ class CoreServer:
             await self.gateway.close()
 
     async def _answer(self, msg: dict[str, Any], emit: Callable[[dict[str, Any]], None]) -> None:
-        streamer = getattr(self.brain, "stream", None)
+        streamer = getattr(self.brain, "stream", None) if msg["type"] == "ask" else None
         try:
             if streamer is not None:
                 out = await self._stream_answer(msg, streamer, emit)

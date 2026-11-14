@@ -1,13 +1,23 @@
 import Darwin
 import Foundation
+import IOKit.ps
 import Observation
 
-/// CPU, mémoire et disque du Mac (API Mach), rafraîchis toutes les 2 s.
+/// CPU, mémoire, disque et batterie du Mac (API Mach, IOKit), rafraîchis toutes les 2 s.
 @MainActor @Observable
 final class SystemStats {
     private(set) var cpu: Double = 0
     private(set) var memory: Double = 0
     private(set) var disk: Double = 0
+    private(set) var cpuHistory: [Double] = []          // 60 dernières mesures (2 min)
+    private(set) var memoryUsedBytes: Double = 0
+    let memoryTotalBytes = Double(ProcessInfo.processInfo.physicalMemory)
+    private(set) var diskFreeBytes: Double = 0
+    private(set) var diskTotalBytes: Double = 0
+    private(set) var battery: Double?                   // nil : pas de batterie
+    private(set) var charging = false
+    var uptime: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    let cores = ProcessInfo.processInfo.activeProcessorCount
     private var previous: host_cpu_load_info?
     private var timer: Timer?
 
@@ -19,9 +29,28 @@ final class SystemStats {
     }
 
     func refresh() {
-        cpu = readCPU() ?? cpu
+        if let c = readCPU() {
+            cpu = c
+            cpuHistory.append(c)
+            if cpuHistory.count > 60 { cpuHistory.removeFirst(cpuHistory.count - 60) }
+        }
         memory = readMemory() ?? memory
         disk = readDisk() ?? disk
+        readBattery()
+    }
+
+    private func readBattery() {
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] else { battery = nil; return }
+        for source in list {
+            guard let d = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue() as? [String: Any],
+                  d[kIOPSTypeKey] as? String == kIOPSInternalBatteryType,
+                  let cur = d[kIOPSCurrentCapacityKey] as? Int, let max = d[kIOPSMaxCapacityKey] as? Int, max > 0 else { continue }
+            battery = Double(cur) / Double(max)
+            charging = d[kIOPSIsChargingKey] as? Bool ?? false
+            return
+        }
+        battery = nil
     }
 
     private func readCPU() -> Double? {
@@ -47,13 +76,16 @@ final class SystemStats {
         }
         guard kr == KERN_SUCCESS else { return nil }
         let used = Double(stats.active_count + stats.wire_count + stats.compressor_page_count) * Double(vm_kernel_page_size)
-        return used / Double(ProcessInfo.processInfo.physicalMemory)
+        memoryUsedBytes = used
+        return used / memoryTotalBytes
     }
 
     private func readDisk() -> Double? {
         let url = URL(fileURLWithPath: "/")
         guard let v = try? url.resourceValues(forKeys: [.volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey]),
               let total = v.volumeTotalCapacity, let free = v.volumeAvailableCapacityForImportantUsage, total > 0 else { return nil }
+        diskFreeBytes = Double(free)
+        diskTotalBytes = Double(total)
         return 1 - Double(free) / Double(total)
     }
 }

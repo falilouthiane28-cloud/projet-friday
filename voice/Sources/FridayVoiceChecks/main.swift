@@ -201,6 +201,18 @@ check(book.armed == nil, "annuler la confirmation")
 book.apply(facts: [], available: false, forgot: nil)
 check(book.phase == .unavailable && book.emptyText.contains("pas disponible"), "mémoire indisponible expliquée")
 
+// Dashboard : données réelles du cœur
+check(CoreRequest.dashboard.jsonLine() == #"{"type":"dashboard"}"#, "dashboard encodé")
+if case .dashboard(let d)? = CoreEvent.parse(#"{"type":"dashboard","city":"Dakar","weather":{"city":"Dakar","temperature":27.4,"code":2,"label":"partiellement nuageux","is_day":false,"min":22,"max":30,"rain":5},"agenda":[{"start":"2026-11-14T14:00:00","end":"2026-11-14T15:00:00","title":"Dentiste","all_day":false},{"start":"2026-11-14T00:00:00","end":"2026-11-15T00:00:00","title":"Fête","all_day":true}],"agents":[{"name":"researcher","title":"Chercheur","role":"web","model":"sonnet","tools":["web_search"]}],"home_configured":false}"#) {
+    check(d.weather?.city == "Dakar" && d.weather?.temperature == 27.4 && d.weather?.symbol == "cloud.moon", "météo lue (nuit : lune)")
+    check(d.agenda?.map(\.timeLabel) == ["14:00", "Journée"], "agenda lu, heures")
+    check(d.agents.first?.title == "Chercheur" && d.agents.first?.tools == ["web_search"], "agents lus")
+    check(!d.homeConfigured && !d.unavailable, "domotique non configurée")
+} else { check(false, "dashboard lu") }
+if case .dashboard(let d)? = CoreEvent.parse(#"{"type":"dashboard","weather":null,"weather_error":"Météo indisponible (réseau).","agenda":null,"agenda_error":"Calendrier indisponible.","agents":[]}"#) {
+    check(d.weather == nil && d.weatherError != nil && d.agenda == nil && d.agendaError != nil, "sources absentes avec raison")
+} else { check(false, "dashboard partiel lu") }
+
 print("\(passed) vérifications OK, \(failures) échec(s)")
 if failures > 0 { exit(1) }
 

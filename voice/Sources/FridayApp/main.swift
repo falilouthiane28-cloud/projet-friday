@@ -116,6 +116,28 @@ func snapshot(to dir: String) {
     model.forgetFact(2)                               // 2e fait en attente de confirmation
     render(MemoryPanel(model: model, scrolls: false).padding(16).frame(width: 380, height: 520)
         .background(Color(white: 0.1)), "fenetre-memoire.png")
+
+    // Dashboard : chaque section seule (ImageRenderer ne rend ni NavigationSplitView ni ScrollView).
+    var info = DashboardInfo()
+    info.city = "Dakar"
+    info.weather = .init(city: "Dakar", temperature: 27.4, feelsLike: 29, code: 2, label: "partiellement nuageux",
+                         wind: 18, isDay: false, min: 22, max: 30, rain: 5)
+    info.agenda = [.init(start: "2026-11-14T00:00:00", end: "2026-11-15T00:00:00", title: "Anniversaire d'Awa", allDay: true),
+                   .init(start: "2026-11-14T14:00:00", end: "2026-11-14T15:00:00", title: "Dentiste")]
+    info.agents = AgentsSection.fallback
+    model.handle(.dashboard(info))
+    let detail = { (v: AnyView, name: String) in
+        render(v.frame(width: 1200, height: 860).background(Theme.surface0), name)
+    }
+    detail(AnyView(HStack(spacing: 0) {
+        HubView(model: model).frame(maxWidth: .infinity, maxHeight: .infinity)
+        WidgetsColumn(model: model, scrolls: false).frame(width: 300).frame(maxHeight: .infinity, alignment: .top).background(Theme.surface1)
+    }), "dash-accueil.png")
+    detail(AnyView(AgentsSection(model: model, scrolls: false)), "dash-agents.png")
+    detail(AnyView(MemorySection(model: model, scrolls: false)), "dash-memoire.png")
+    detail(AnyView(HomeAutomationSection(model: model, scrolls: false)), "dash-domotique.png")
+    detail(AnyView(SystemSection(model: model, scrolls: false)), "dash-systeme.png")
+    render(StatsView(stats: model.stats).padding(16).frame(width: 220).background(Theme.surface1), "dash-sidebar-stats.png")
 }
 
 let args = CommandLine.arguments

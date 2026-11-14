@@ -51,6 +51,13 @@ final class AppModel {
     private(set) var needsLogin = false
     private(set) var memory = MemoryBook()            // « Ce dont Friday se souvient… »
     var showingMemory = false
+    /// Dashboard : section affichée, et fenêtre au premier plan (la bulle est alors masquée).
+    var dashboardSection: DashSection = .accueil
+    var dashboardFront = false
+    /// Données réelles du dashboard (météo, agenda, agents) ; nil tant que le cœur n'a pas répondu.
+    private(set) var dashboard: DashboardInfo?
+    private(set) var dashboardLoading = false
+    private(set) var dashboardUpdated: Date?
     /// Une réponse est attendue (saisie texte ou énoncé vocal).
     var isThinking: Bool { !pendingText.subtracting(streaming.keys).isEmpty || voiceState == .processing }
     /// Lire aussi les réponses aux messages tapés (par défaut : seulement en mode vocal).
@@ -189,6 +196,7 @@ final class AppModel {
             brainName = brain
             claudeBinary = binary
             log("cœur prêt (\(name), cerveau : \(brain))")
+            if dashboardFront { refreshDashboard(force: true) }
         case .chunk(let id, let text):
             // Réponse en flux : le fil se remplit phrase par phrase, la voix lit dès la première.
             if let mid = streaming[id], let i = messages.firstIndex(where: { $0.id == mid }) {
@@ -217,7 +225,9 @@ final class AppModel {
             let request = ConfirmRequest(id: id, summary: summary, action: action)
             messages.append(ChatMessage(fromFriday: true, text: summary, confirm: request))
             log("confirmation demandée (\(action))")
-            if !overlayExpanded {                         // la carte doit être visible
+            if dashboardFront {                           // la carte doit être visible : dans le dashboard…
+                dashboardSection = .conversations
+            } else if !overlayExpanded {                  // … ou dans la fenêtre de la bulle
                 OverlayController.shared.show(model: self)
                 OverlayController.shared.setExpanded(true)
             }
@@ -234,6 +244,11 @@ final class AppModel {
         case .memory(let facts, let available, let forgot):
             memory.apply(facts: facts, available: available, forgot: forgot)
             log("mémoire : \(facts.count) fait(s)\(forgot == true ? ", un fait oublié" : "")")
+        case .dashboard(let info):
+            dashboard = info
+            dashboardLoading = false
+            dashboardUpdated = Date()
+            log("dashboard : météo \(info.weather == nil ? "absente" : "ok"), agenda \(info.agenda?.count ?? -1), \(info.agents.count) agents")
         case .error(let message):
             pendingText.removeAll()
             note("Le cœur a signalé une erreur : \(message)")
@@ -244,6 +259,7 @@ final class AppModel {
     private func coreExited(_ code: Int32) {
         core = nil
         brainName = nil
+        dashboardLoading = false
         pendingText.removeAll()
         note("Le cœur Python s'est arrêté (code \(code)).")
         show(.error)
@@ -281,6 +297,11 @@ final class AppModel {
     /// Raccourci global (⌃⌥Espace par défaut).
     func hotkey() {
         log("raccourci global pressé")
+        if dashboardFront {                               // le dashboard tient lieu de fenêtre de conversation
+            dashboardSection = .conversations
+            toggleListening()
+            return
+        }
         switch VoiceLink.hotkey(expanded: overlayExpanded, voice: voiceState) {
         case .expandAndListen:
             OverlayController.shared.show(model: self)
@@ -293,11 +314,28 @@ final class AppModel {
 
     /// « Ce dont Friday se souvient… » : ouvre la fenêtre sur le panneau mémoire et redemande la liste.
     func showMemory() {
-        OverlayController.shared.show(model: self)
-        OverlayController.shared.setExpanded(true)
-        showingMemory = true
+        if dashboardFront {
+            dashboardSection = .memoire
+        } else {
+            OverlayController.shared.show(model: self)
+            OverlayController.shared.setExpanded(true)
+            showingMemory = true
+        }
+        requestMemory()
+    }
+
+    /// Redemande la liste des faits au cœur.
+    func requestMemory() {
         let request = memory.open()
         if let core { core.send(request) } else { memory.apply(facts: [], available: false, forgot: nil) }
+    }
+
+    /// Données du dashboard : redemandées si absentes ou vieilles de plus de 10 min (ou sur demande).
+    func refreshDashboard(force: Bool = false) {
+        guard let core else { return }
+        if !force, dashboardLoading || (dashboardUpdated.map { Date().timeIntervalSince($0) < 600 } ?? false) { return }
+        dashboardLoading = true
+        core.send(.dashboard)
     }
 
     /// Oubli d'un fait : 1er appui = confirmation demandée, 2e appui = envoyé au cœur.
@@ -344,6 +382,12 @@ final class AppModel {
     func openWindow(_ id: String) {
         openWindowAction?(id)
         NSApp.activate()
+    }
+
+    /// Ouvre le dashboard sur une section.
+    func openDashboard(_ section: DashSection) {
+        dashboardSection = section
+        openWindow("dashboard")
     }
 
     func openSettings() {
