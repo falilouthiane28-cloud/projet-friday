@@ -52,6 +52,9 @@ def valid_handle(value: str) -> bool:
 
 def _clean(text: str, limit: int) -> str:
     text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", text.replace(_RS, " ").replace(_US, " "))
+    # Pièces jointes (U+FFFC) et caractères invisibles : zéro largeur et contrôles bidirectionnels,
+    # qui servent à cacher une injection dans un texte d'apparence anodine.
+    text = re.sub("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff\ufffc]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text if len(text) <= limit else text[:limit] + "…"
 

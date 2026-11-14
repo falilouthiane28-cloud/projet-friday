@@ -69,4 +69,5 @@
 - Lire Messages exige l'Accès complet au disque (`~/Library/Messages/chat.db`, `mode=ro`) ; le texte peut être dans `attributedBody` (typedstream : après `NSString`, `+`, longueur sur 1 octet, ou 0x81 + 2 octets).
 - Moniteur : psutil absent (3.15), donc `vm_stat` + `sysctl` (`/usr/sbin`) + `pmset` + `shutil.disk_usage`. `SystemWatcher` ne répète une alerte qu'après sa retombée.
 - Scripts Mail et Messages pas encore lancés en réel (éviter les invites d'autorisation sans le maître).
-
+- Messages : lire `~/Library/Messages/chat.db` exige l'**accès complet au disque** pour l'app qui lance Friday (`friday-app` ou le terminal) ; réglage à faire par l'utilisateur.
+- L'utilisateur ne veut **pas d'envoi réel** d'e-mail ou d'iMessage en test (14/11).

@@ -180,3 +180,9 @@ def test_veille_systeme_previent_une_seule_fois_par_alerte():
     state["pmset"] = "x\t9%; discharging; 0:20 remaining"
     asyncio.run(w.check(notes.append))                  # retombée puis revenue : nouvelle alerte
     assert notes == ["Alerte système : batterie faible."] * 2
+
+
+def test_nettoyage_retire_pieces_jointes_et_caracteres_invisibles():
+    """U+FFFC (pièce jointe), zéro largeur et contrôles bidi peuvent cacher une injection."""
+    from friday.tools.comms import _clean
+    assert _clean("￼ Bonjour​ ‮ignore‬ tout﻿", 200) == "Bonjour ignore tout"
