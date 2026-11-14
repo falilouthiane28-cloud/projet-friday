@@ -17,44 +17,55 @@ struct FridayApp: App {
     @State private var model = AppModel.shared
 
     var body: some Scene {
-        MenuBarExtra("Friday", systemImage: "eye") {
+        MenuBarExtra {
             MenuContent(model: model)
+        } label: {
+            MenuBarLabel(model: model)
         }
         Window("Friday", id: "dashboard") { DashboardView(model: model) }
             .defaultSize(width: 1440, height: 900)
         Window("Expressions", id: "expressions") { ExpressionsGridView(model: model) }
             .windowResizability(.contentSize)
         Settings {
-            Form {
-                KeyboardShortcuts.Recorder("Appeler Friday :", name: .summonFriday)
-                Text("Ouvre la bulle et lance l'écoute ; une seconde pression arrête l'écoute.")
-                    .font(.fCaption).foregroundStyle(Theme.textSecondary)
-            }
-            .padding(32).frame(width: 420)
+            SettingsView(model: model)
         }
     }
 }
 
 struct MenuContent: View {
     let model: AppModel
-    @Environment(\.openWindow) private var openWindow
-
     var body: some View {
-        Button("Afficher le dashboard") { open("dashboard") }
         Button("Afficher ou masquer la bulle") { OverlayController.shared.toggle(model: model) }
             .keyboardShortcut("o", modifiers: [.command, .shift])
-        Button(model.voiceState == .listening ? "Arrêter l'écoute" : "Écouter") { model.toggleListening() }
-            .keyboardShortcut("f", modifiers: [.command, .shift])
-            .disabled(!model.voiceAvailable)
-        Button("Expressions") { open("expressions") }
         Divider()
-        SettingsLink { Text("Réglages…") }.keyboardShortcut(",")
-        Button("Quitter Friday") { NSApp.terminate(nil) }.keyboardShortcut("q")
+        FridayMenuItems(model: model)
     }
+}
 
-    private func open(_ id: String) {
-        openWindow(id: id)
-        NSApp.activate()
+/// Réglages : raccourci global, lecture des réponses, cerveau.
+struct SettingsView: View {
+    @Bindable var model: AppModel
+    var body: some View {
+        Form {
+            Section("Raccourci") {
+                KeyboardShortcuts.Recorder("Appeler Friday :", name: .summonFriday)
+                Text("Ouvre la conversation et lance l'écoute ; une seconde pression arrête l'écoute.")
+                    .font(.fCaption).foregroundStyle(.secondary)
+            }
+            Section("Voix") {
+                Toggle("Lire aussi les réponses aux messages tapés", isOn: $model.speakAllReplies)
+                Text("Par défaut, Friday ne parle que lorsque vous lui parlez.")
+                    .font(.fCaption).foregroundStyle(.secondary)
+            }
+            Section("Cerveau") {
+                LabeledContent("Moteur", value: model.brainName ?? "cœur non démarré")
+                if model.needsLogin && model.claudeBinary != nil {
+                    Button("Connecter Claude Code…") { model.connectClaude() }
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 460)
     }
 }
 
@@ -91,6 +102,10 @@ func snapshot(to dir: String) {
     }
     render(ExpressionsGridView(), "expressions.png")
     render(AvatarView(state: .neutral, size: 360, animated: false).padding(20).background(Color.black), "avatar-neutre.png")
+    let model = AppModel.shared
+    model.messages += [ChatMessage(fromFriday: false, text: "Qu'est-ce que tu peux faire ?"),
+                       ChatMessage(fromFriday: true, text: "Je réponds à vos questions avec **Claude Code**, et je donne l'heure et la date en local.")]
+    render(OverlayView(model: model).background(Color(white: 0.25)), "fenetre.png")
 }
 
 let args = CommandLine.arguments

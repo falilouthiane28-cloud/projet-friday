@@ -86,7 +86,7 @@ class VoiceBridge:
             self._log.info("voice.state", state=self.state)
         elif kind == "utterance":
             decision = self.conductor.handle(msg["text"], source="voice")
-            reply = await self.brain.respond(msg["text"], decision)
+            reply = await self.brain.respond(msg["text"], decision, "voice")
             await self.send({"type": "say", "text": reply})
         elif kind == "metrics":
             ttfa = int(msg.get("ttfa_ms", 0))

@@ -11,7 +11,8 @@ import asyncio
 import sys
 
 from .audit import AuditLog
-from .brain import LocalBrain
+from .brain import Brain, HybridBrain, LocalBrain
+from .claude_brain import ClaudeCodeBrain, find_claude_binary
 from .conductor import Conductor
 from .config import FridayConfig, load_config
 from .guardrails import GuardrailsEngine
@@ -20,7 +21,7 @@ from .soul import load_soul
 from .voice import CoreServer, VoiceBridge
 
 
-async def text_loop(conductor: Conductor, brain: LocalBrain) -> None:
+async def text_loop(conductor: Conductor, brain: Brain) -> None:
     loop = asyncio.get_running_loop()
     while True:
         try:
@@ -33,7 +34,7 @@ async def text_loop(conductor: Conductor, brain: LocalBrain) -> None:
         print(f"  [{d.intent.value} → {d.agent}, {d.confidence}] {reply}")
 
 
-async def voice_loop(cfg: FridayConfig, conductor: Conductor, brain: LocalBrain, audit: AuditLog) -> int:
+async def voice_loop(cfg: FridayConfig, conductor: Conductor, brain: Brain, audit: AuditLog) -> int:
     if not cfg.voice_binary.exists():
         print(f"Binaire introuvable : {cfg.voice_binary}\nCompiler : cd voice && swift build -c release", file=sys.stderr)
         return 1
@@ -45,6 +46,18 @@ async def voice_loop(cfg: FridayConfig, conductor: Conductor, brain: LocalBrain,
         await bridge.shutdown()
 
 
+def make_brain(cfg: FridayConfig, soul: dict) -> Brain:
+    local = LocalBrain()
+    if cfg.brain_engine != "claude-code":
+        return local
+    binary = find_claude_binary(cfg.claude_binary)
+    if binary is None:
+        print("Claude Code introuvable : réponses locales seulement.", file=sys.stderr)
+        return local
+    workdir = cfg.audit_db_path.parent / "claude"      # sessions Claude Code de Friday, hors du dépôt
+    return HybridBrain(local, ClaudeCodeBrain(binary, soul, workdir, cfg.claude_model, cfg.claude_timeout_s))
+
+
 def main() -> None:
     i = sys.argv.index("--config") if "--config" in sys.argv else -1
     cfg = load_config(sys.argv[i + 1] if 0 <= i < len(sys.argv) - 1 else None)
@@ -53,7 +66,7 @@ def main() -> None:
     audit = AuditLog(cfg.audit_db_path)
     guardrails = GuardrailsEngine(cfg.guardrails.actions, cfg.guardrails.allowed_domains, audit)
     conductor = Conductor(guardrails=guardrails, audit=audit)
-    brain = LocalBrain()
+    brain = make_brain(cfg, soul)
     try:
         if "--serve" in sys.argv:
             server = CoreServer(conductor, brain, audit, name=soul["IDENTITY"]["name"])

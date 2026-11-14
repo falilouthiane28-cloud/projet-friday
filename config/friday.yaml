@@ -19,6 +19,14 @@ voice:
   binary: voice/.build/release/friday-voice
   locale: fr-FR
 
+brain:
+  # claude-code : heure et date en local, le reste à Claude Code (`claude -p`, sans outils).
+  # local : réponses locales seulement (hors ligne).
+  engine: claude-code
+  claude_binary: null    # null : PATH, ~/.claude/local, puis le binaire de l'app Claude
+  model: sonnet
+  timeout_s: 60
+
 conductor:
   # En dessous de ce score, l'intention retombe sur « conversation ».
   min_confidence: 0.3

@@ -17,6 +17,11 @@ public enum VoiceLink {
         voice == .speaking && avatar == .happy ? "Je parle" : avatar.label
     }
 
+    /// Friday parle seulement quand on lui a parlé, sauf option « lire toutes les réponses ».
+    public static func shouldSpeak(askedByVoice: Bool, speakAll: Bool, voiceAvailable: Bool) -> Bool {
+        voiceAvailable && (askedByVoice || speakAll)
+    }
+
     /// Raccourci global : ouvre la fenêtre et lance l'écoute ; fenêtre déjà ouverte et à l'écoute → arrête.
     public enum HotkeyAction: Equatable, Sendable { case expandAndListen, listen, stopListening }
 

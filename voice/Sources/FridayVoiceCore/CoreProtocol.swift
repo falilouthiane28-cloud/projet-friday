@@ -2,11 +2,12 @@ import Foundation
 
 /// Protocole JSON Lines entre l'app Swift et le cœur Python (`python -m friday --serve`).
 ///
-/// app → cœur : ask{id, text, source}, metrics{ttfa_ms}, shutdown
-/// cœur → app : ready{name}, reply{id, text, intent, agent}, error{message}
+/// app → cœur : ask{id, text, source}, metrics{ttfa_ms}, reset, shutdown
+/// cœur → app : ready{name, brain, claude_binary?}, reply{id, text, intent, agent, login_required?}, error{message}
 public enum CoreRequest: Equatable, Sendable {
     case ask(id: Int, text: String, source: String)     // source : "voice" | "text"
     case metrics(ttfaMs: Int)
+    case reset                                          // nouvelle conversation
     case shutdown
 
     public func jsonLine() -> String {
@@ -14,6 +15,7 @@ public enum CoreRequest: Equatable, Sendable {
         switch self {
         case .ask(let id, let text, let source): obj = ["type": "ask", "id": id, "text": text, "source": source]
         case .metrics(let ms): obj = ["type": "metrics", "ttfa_ms": ms]
+        case .reset: obj = ["type": "reset"]
         case .shutdown: obj = ["type": "shutdown"]
         }
         let data = (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
@@ -22,18 +24,21 @@ public enum CoreRequest: Equatable, Sendable {
 }
 
 public enum CoreEvent: Equatable, Sendable {
-    case ready(name: String)
-    case reply(id: Int, text: String, intent: String, agent: String)
+    case ready(name: String, brain: String, claudeBinary: String?)
+    case reply(id: Int, text: String, intent: String, agent: String, loginRequired: Bool)
     case error(String)
 
     public static func parse(_ line: String) -> CoreEvent? {
         guard let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
               let type = obj["type"] as? String else { return nil }
         switch type {
-        case "ready": return .ready(name: obj["name"] as? String ?? "Friday")
+        case "ready":
+            return .ready(name: obj["name"] as? String ?? "Friday", brain: obj["brain"] as? String ?? "local",
+                          claudeBinary: obj["claude_binary"] as? String)
         case "reply":
             guard let id = obj["id"] as? Int, let text = obj["text"] as? String else { return nil }
-            return .reply(id: id, text: text, intent: obj["intent"] as? String ?? "", agent: obj["agent"] as? String ?? "")
+            return .reply(id: id, text: text, intent: obj["intent"] as? String ?? "", agent: obj["agent"] as? String ?? "",
+                          loginRequired: obj["login_required"] as? Bool ?? false)
         case "error": return .error(obj["message"] as? String ?? "erreur inconnue")
         default: return nil
         }

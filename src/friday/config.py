@@ -31,6 +31,10 @@ class FridayConfig:
     guardrails: GuardrailsConfig = field(default_factory=GuardrailsConfig)
     voice_binary: Path = PROJECT_ROOT / "voice" / ".build" / "release" / "friday-voice"
     voice_locale: str = "fr-FR"
+    brain_engine: str = "claude-code"          # claude-code | local
+    claude_binary: str | None = None           # None : recherche automatique
+    claude_model: str = "sonnet"
+    claude_timeout_s: float = 60
 
 
 def _resolve(path: str | Path, base: Path) -> Path:
@@ -48,6 +52,7 @@ def load_config(path: str | Path | None = None) -> FridayConfig:
     cond = raw.get("conductor", {})
     gr = raw.get("guardrails", {})
     voice = raw.get("voice", {})
+    brain = raw.get("brain", {})
 
     tiers = {str(k): int(v) for k, v in (gr.get("actions") or {}).items()}
     for name, tier in tiers.items():
@@ -69,4 +74,8 @@ def load_config(path: str | Path | None = None) -> FridayConfig:
         ),
         voice_binary=_resolve(voice.get("binary", "voice/.build/release/friday-voice"), PROJECT_ROOT),
         voice_locale=voice.get("locale", "fr-FR"),
+        brain_engine=str(brain.get("engine", "claude-code")),
+        claude_binary=brain.get("claude_binary"),
+        claude_model=str(brain.get("model", "sonnet")),
+        claude_timeout_s=float(brain.get("timeout_s", 60)),
     )

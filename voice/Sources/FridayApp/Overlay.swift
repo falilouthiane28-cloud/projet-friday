@@ -94,12 +94,13 @@ struct BubbleView: View {
             .contentShape(Circle())
             .onHover { hover = $0 }
             .onTapGesture { OverlayController.shared.setExpanded(true) }
-            .help("Friday — \(model.avatar.label). Cliquer pour ouvrir, glisser pour déplacer.")
+            .help("Friday — \(model.statusLabel). Cliquer pour ouvrir, clic droit pour les commandes, glisser pour déplacer.")
             .accessibilityElement()
             .accessibilityLabel("Friday, \(model.avatar.label)")
             .accessibilityHint("Ouvre la conversation")
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { OverlayController.shared.setExpanded(true) }
+            .contextMenu { FridayMenuItems(model: model, context: true) }   // clic droit : tout Friday depuis la bulle
     }
 }
 
@@ -111,6 +112,14 @@ struct OverlayView: View {
             ZStack {
                 Capsule().fill(Theme.handle).frame(width: 40, height: 4).accessibilityHidden(true)
                 HStack {
+                    Menu {
+                        FridayMenuItems(model: model)
+                    } label: {
+                        Image(systemName: "ellipsis.circle").font(.system(size: 16)).frame(width: 28, height: 28).contentShape(.rect)
+                    }
+                    .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                    .foregroundStyle(Theme.textSecondary)
+                    .help("Commandes de Friday").accessibilityLabel("Commandes de Friday")
                     Spacer()
                     Button { OverlayController.shared.setExpanded(false) } label: {
                         Image(systemName: "chevron.down.circle").font(.system(size: 16)).frame(width: 28, height: 28).contentShape(.rect)
@@ -127,7 +136,8 @@ struct OverlayView: View {
                 Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(Theme.textPrimary)
                 StateLabel(state: model.avatar, text: model.statusLabel)
             }
-            ChatThread(messages: model.messages)
+            StatusRow(model: model)
+            ChatThread(messages: model.messages, thinking: model.isThinking)
             HStack(spacing: 8) {
                 pill("Rappel", "bell", "Rappelle-moi de ")
                 pill("Tâche", "checkmark.square", "Ajoute la tâche ")
@@ -147,8 +157,28 @@ struct OverlayView: View {
     }
 }
 
+/// Ce qui marche, en clair : cerveau et micro (icône + texte, jamais la couleur seule).
+struct StatusRow: View {
+    let model: AppModel
+    var body: some View {
+        HStack(spacing: 12) {
+            item(model.brainName == nil ? "brain" : "brain.fill",
+                 model.needsLogin ? "Claude Code à connecter" : (model.brainName.map { $0 == "local" ? "Réponses locales" : $0 } ?? "Cœur en démarrage"))
+            item(model.voiceAvailable ? "mic.fill" : "mic.slash", model.voiceAvailable ? "Micro actif" : "Micro indisponible")
+        }
+        .font(.fCaption)
+        .foregroundStyle(Theme.textSecondary)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func item(_ icon: String, _ text: String) -> some View {
+        Label(text, systemImage: icon).labelStyle(.titleAndIcon).lineLimit(1)
+    }
+}
+
 struct ChatThread: View {
     let messages: [ChatMessage]
+    var thinking = false
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -156,8 +186,9 @@ struct ChatThread: View {
                     ForEach(messages) { m in
                         HStack {
                             if !m.fromFriday { Spacer(minLength: 40) }
-                            Text(m.text)
+                            Text(Self.render(m.text))
                                 .font(.fBody)
+                                .textSelection(.enabled)
                                 .foregroundStyle(m.fromFriday ? Theme.textSecondary : Theme.textPrimary)
                                 .padding(.horizontal, 12).padding(.vertical, 8)
                                 .background(m.fromFriday ? Theme.surface2 : Theme.surface3,
@@ -168,13 +199,32 @@ struct ChatThread: View {
                         }
                         .id(m.id)
                     }
+                    if thinking {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Friday réfléchit…").font(.fBody).foregroundStyle(Theme.textSecondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 8)
+                        .id("thinking")
+                        .accessibilityElement(children: .combine)
+                    }
                 }
                 .padding(.vertical, 4)
             }
             .onChange(of: messages.count) { _, _ in
                 withAnimation { proxy.scrollTo(messages.last?.id, anchor: .bottom) }
             }
+            .onChange(of: thinking) { _, now in
+                if now { withAnimation { proxy.scrollTo("thinking", anchor: .bottom) } }
+            }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    /// Markdown en ligne des réponses de Claude (gras, italique, code, liens) ; texte brut sinon.
+    static func render(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
     }
 }

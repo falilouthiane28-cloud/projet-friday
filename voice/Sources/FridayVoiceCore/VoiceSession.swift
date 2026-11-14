@@ -17,7 +17,7 @@ public enum VoiceEffect: Equatable, Sendable {
 public struct VoiceTimings: Sendable {
     public var endOfSpeech: TimeInterval = 0.7      // texte stable depuis ce délai → fin d'énoncé
     public var listenTimeout: TimeInterval = 6      // rien dit après le wake word → retour au repos
-    public var processingTimeout: TimeInterval = 15
+    public var processingTimeout: TimeInterval = 60  // Claude Code peut prendre plusieurs secondes
     public var idleResetAfter: TimeInterval = 2     // vide le tampon de transcription au repos
     public var bargeInMinWords = 2
     public init() {}

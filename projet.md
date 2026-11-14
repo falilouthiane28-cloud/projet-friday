@@ -37,6 +37,7 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 - `src/friday/` — code : `config.py`, `soul.py`, `log.py` (structlog), `audit.py` (SQLite WAL chaîné), `conductor.py`, `guardrails/` (`tiers.py`, `tier0.py`, `engine.py`), `__main__.py`
 - `voice/` — paquet Swift : `FridayVoiceCore` (machine à états, wake word, protocole), `FridayVoiceKit` (micro, STT, TTS, `VoicePipeline`), `FridayVoice` (binaire piloté par Python), `FridayUICore` (avatar, lien voix → avatar), `FridayApp` (interface SwiftUI avec la voix dans le même processus, cœur Python en sous-processus, raccourci KeyboardShortcuts 1.15.0), `friday-voice-checks`
 - `reports/Interface desktop Friday.md` — rapport de recherche UI (notes dans `research_notes/Interface desktop Friday/`)
+- `src/friday/claude_brain.py` (`ClaudeCodeBrain`), `brain.py` (`LocalBrain`, `HybridBrain`)
 - `src/friday/voice/bridge.py` (pont JSON Lines, mode `--voice`), `src/friday/voice/server.py` (`CoreServer`, mode `--serve` lancé par l'app), `src/friday/brain.py` (`LocalBrain`)
 - `tests/` — pytest (`.venv/bin/pytest`) ; `data/` — base d'audit locale (ignorée par Git)
 
@@ -56,6 +57,7 @@ Assistant IA personnel type J.A.R.V.I.S. pour le poste de travail de Thaïne Fal
 | 2026-11-12 | Création des fichiers de suivi | Garder le contexte entre sessions |
 | 2026-11-13 | Stack révisée (wake word, STT, Redis, pynvml remplacés) | Rapport de recherche |
 | 2026-11-13 | UI passée en noir et blanc strict | Prompt v2 de l'utilisateur |
+| 2026-11-14 | Cerveau Claude Code headless sans outils, heure/date en local | Choix de l'utilisateur ; aucune action machine avant les guardrails de la phase 3 |
 | 2026-11-14 | App = UI + voix dans un processus Swift, Python en sous-processus (`--serve`) | Recommandation du rapport UI ; un seul AVAudioEngine, états voix directs vers l'avatar |
 | 2026-11-14 | UI en SwiftUI natif plutôt que Tauri | Vrai Liquid Glass, compile avec les CLT, même langage que la voix |
 | 2026-11-14 | Voix en Swift natif, cœur Python, cerveau Claude Code | Choix de l'utilisateur ; onnxruntime absent pour Python 3.15 |

@@ -35,4 +35,7 @@
 - 2026-11-14 : l'app `friday-app` contient la voix (même AVAudioEngine) et lance `.venv/bin/python -m friday --serve` avec `PYTHONPATH=src` ; racine du dépôt trouvée en remontant jusqu'à `pyproject.toml` (ou `FRIDAY_ROOT`). `--config <yaml>` permet un audit isolé dans les tests.
 - KeyboardShortcuts : rester en **1.15.0** ; les versions ≥ 1.16 utilisent `#Preview`/`@Entry`, dont les plugins de macros SwiftUI manquent dans les CLT.
 - Raccourci ⌃⌥Espace : bulle → fenêtre + écoute ; fenêtre à l'écoute → arrêt ; pendant la parole → coupe et écoute (`VoiceSession.onListen`).
+- 2026-11-14 : cerveau = **Claude Code en headless** (`claude -p --output-format json --tools "" --strict-mcp-config --setting-sources ""`), sessions dans `data/claude/`. Le binaire de l'app Claude (`~/Library/Application Support/Claude/claude-code/<ver>/*/claude.app/Contents/MacOS/claude`) n'est **pas connecté hors de l'app** : il faut `claude` puis `/login` une fois (ou `ANTHROPIC_API_KEY`). Retirer les variables `CLAUDECODE`/`CLAUDE_CODE_*`/`ANTHROPIC_BASE_URL` héritées d'une session parente.
+- Friday ne parle que si la question est vocale (`VoiceLink.shouldSpeak`) ; timeout de traitement vocal porté à 60 s pour Claude.
+- Une vue hébergée dans un NSPanel n'est pas dans une scène SwiftUI : `openWindow`/`openSettings` sont capturés depuis le label du MenuBarExtra (`MenuBarLabel`).
 - Conductor : interface `IntentClassifier` prévue pour brancher semantic-router puis Haiku en phase 3.

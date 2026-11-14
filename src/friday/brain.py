@@ -17,7 +17,7 @@ _MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "aoû
 
 
 class Brain(Protocol):
-    async def respond(self, text: str, decision: RoutingDecision) -> str: ...
+    async def respond(self, text: str, decision: RoutingDecision, source: str = "text") -> str: ...
 
 
 def dire_heure(now: datetime) -> str:
@@ -34,15 +34,46 @@ def dire_date(now: datetime) -> str:
 class LocalBrain:
     """Réponses locales sans LLM, pour les commandes simples et les tests de latence."""
 
+    name = "local"
+
     def __init__(self, clock: Callable[[], datetime] = datetime.now) -> None:
         self.clock = clock
 
-    async def respond(self, text: str, decision: RoutingDecision) -> str:
+    def quick(self, text: str) -> str | None:
+        """Réponse instantanée si la demande est locale (heure, date), sinon None."""
         t = normalize(text)
         if "heure" in t or "what time" in t:
             return dire_heure(self.clock())
         if "date" in t or "quel jour" in t or "on est le" in t:
             return dire_date(self.clock())
+        return None
+
+    async def respond(self, text: str, decision: RoutingDecision, source: str = "text") -> str:
+        if (reply := self.quick(text)) is not None:
+            return reply
         if decision.intent is Intent.CONVERSATION:
             return "Je vous écoute."
         return f"Bien reçu. L'agent {decision.agent} sera branché à la phase 3."
+
+
+class HybridBrain:
+    """Heure et date en local (instantané), tout le reste à Claude Code."""
+
+    name = "Claude Code"
+
+    def __init__(self, local: LocalBrain, remote: Brain) -> None:
+        self.local = local
+        self.remote = remote
+
+    def reset(self) -> None:
+        if hasattr(self.remote, "reset"):
+            self.remote.reset()
+
+    async def respond(self, text: str, decision: RoutingDecision, source: str = "text") -> str:
+        if (reply := self.local.quick(text)) is not None:
+            return reply
+        from .claude_brain import ClaudeError
+        try:
+            return await self.remote.respond(text, decision, source)
+        except ClaudeError as exc:
+            return str(exc)

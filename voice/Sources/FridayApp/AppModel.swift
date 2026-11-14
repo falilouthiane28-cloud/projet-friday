@@ -1,6 +1,7 @@
 import FridayUICore
 import FridayVoiceCore
 import FridayVoiceKit
+import AppKit
 import Foundation
 import Observation
 
@@ -36,6 +37,20 @@ final class AppModel {
     let stats = SystemStats()
 
     var statusLabel: String { VoiceLink.label(voice: voiceState, avatar: avatar) }
+
+    /// Cerveau annoncé par le cœur (« Claude Code », « local ») ; nil tant que le cœur n'est pas prêt.
+    private(set) var brainName: String?
+    private(set) var claudeBinary: String?
+    private(set) var needsLogin = false
+    /// Une réponse est attendue (saisie texte ou énoncé vocal).
+    var isThinking: Bool { !pendingText.isEmpty || voiceState == .processing }
+    /// Lire aussi les réponses aux messages tapés (par défaut : seulement en mode vocal).
+    var speakAllReplies = UserDefaults.standard.bool(forKey: "speakAllReplies") {
+        didSet { UserDefaults.standard.set(speakAllReplies, forKey: "speakAllReplies") }
+    }
+    /// Ouverture des fenêtres SwiftUI, capturée depuis la scène de barre de menus.
+    var openWindowAction: ((String) -> Void)?
+    var openSettingsAction: (() -> Void)?
 
     private var machine = AvatarMachine()
     private let started = Date()
@@ -98,6 +113,7 @@ final class AppModel {
             try await pipeline.start()
             voice = pipeline
             voiceAvailable = true
+            log("voix prête (micro + transcription fr_FR)")
         } catch {
             note("Micro indisponible : \(error.localizedDescription). La saisie texte reste active.")
         }
@@ -107,6 +123,7 @@ final class AppModel {
 
     /// Pipeline vocal → interface et cœur.
     func handle(_ msg: OutMessage) {
+        log(Self.describe(msg))
         switch msg.type {
         case "state":
             guard let s = msg.state.flatMap(VoiceState.init(rawValue:)) else { return }
@@ -128,12 +145,20 @@ final class AppModel {
     /// Cœur Python → fil de conversation et voix.
     func handle(_ event: CoreEvent) {
         switch event {
-        case .ready:
-            break
-        case .reply(let id, let text, _, _):
-            pendingText.remove(id)
+        case .ready(let name, let brain, let binary):
+            brainName = brain
+            claudeBinary = binary
+            log("cœur prêt (\(name), cerveau : \(brain))")
+        case .reply(let id, let text, _, _, let loginRequired):
+            let typed = pendingText.remove(id) != nil
+            needsLogin = loginRequired
             messages.append(ChatMessage(fromFriday: true, text: text))
-            if let voice { Task { await voice.controller.say(text) } } else { show(.happy) }
+            // Parole seulement pour une question posée à la voix (ou si l'option « tout lire » est active).
+            if let voice, VoiceLink.shouldSpeak(askedByVoice: !typed, speakAll: speakAllReplies, voiceAvailable: true) {
+                Task { await voice.controller.say(text) }
+            } else {
+                show(loginRequired ? .confused : .happy)
+            }
         case .error(let message):
             pendingText.removeAll()
             note("Le cœur a signalé une erreur : \(message)")
@@ -143,6 +168,7 @@ final class AppModel {
 
     private func coreExited(_ code: Int32) {
         core = nil
+        brainName = nil
         pendingText.removeAll()
         note("Le cœur Python s'est arrêté (code \(code)).")
         show(.error)
@@ -172,6 +198,49 @@ final class AppModel {
         }
     }
 
+    /// Nouvelle conversation : vide le fil et oublie la session Claude Code.
+    func newConversation() {
+        messages = [ChatMessage(fromFriday: true, text: "Nouvelle conversation. Je vous écoute.")]
+        pendingText.removeAll()
+        core?.send(.reset)
+        if let voice { Task { await voice.controller.stop() } }
+        show(.neutral)
+    }
+
+    /// Ouvre Terminal sur Claude Code pour la connexion (/login), une seule fois.
+    func connectClaude() {
+        guard let binary = claudeBinary else { note("Claude Code est introuvable sur ce Mac."); return }
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Friday")
+        let script = dir.appendingPathComponent("connecter-claude.command")
+        let quoted = "'" + binary.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let body = """
+        #!/bin/zsh
+        echo "Connexion de Friday à Claude Code."
+        echo "Tapez /login, suivez les étapes, puis fermez cette fenêtre."
+        echo
+        exec \(quoted)
+        """
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try body.write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+            NSWorkspace.shared.open(script)
+            note("Terminal est ouvert : tapez /login puis reposez-moi votre question.")
+        } catch {
+            note("Impossible d'ouvrir Terminal : \(error.localizedDescription)")
+        }
+    }
+
+    func openWindow(_ id: String) {
+        openWindowAction?(id)
+        NSApp.activate()
+    }
+
+    func openSettings() {
+        openSettingsAction?()
+        NSApp.activate()
+    }
+
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -190,7 +259,24 @@ final class AppModel {
 
     /// Message système de Friday dans le fil.
     private func note(_ text: String) {
+        log("note : \(text)")
         messages.append(ChatMessage(fromFriday: true, text: text))
+    }
+
+    /// Journal sur stderr. Jamais le texte d'un énoncé (règle d'audit) : seulement sa longueur.
+    func log(_ text: String) {
+        let t = ISO8601DateFormatter().string(from: Date())
+        FileHandle.standardError.write(Data("[friday-app] \(t) \(text)\n".utf8))
+    }
+
+    static func describe(_ msg: OutMessage) -> String {
+        switch msg.type {
+        case "state": "voix : état \(msg.state ?? "?")"
+        case "utterance": "voix : énoncé (\(msg.text?.count ?? 0) caractères)"
+        case "metrics": "voix : TTFA \(msg.ttfaMs ?? -1) ms"
+        case "error": "voix : erreur \(msg.message ?? "?")"
+        default: "voix : \(msg.type)"
+        }
     }
 
     private func apply(_ sequence: [AvatarState]) {
